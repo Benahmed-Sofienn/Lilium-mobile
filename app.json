@@ -51,7 +51,15 @@
           "cameraPermission": "Camera access is required to scan documents."
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "react-native",
+          "organization": "sofien-7y"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

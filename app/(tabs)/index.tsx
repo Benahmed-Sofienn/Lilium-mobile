@@ -11,6 +11,9 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useRouter, Href } from "expo-router";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../src/auth/AuthContext";
+import * as Sentry from "@sentry/react-native";
+import { Button } from "react-native";
+
 
 type ModuleItem = {
   key: string;
@@ -104,6 +107,7 @@ export default function HomeDashboard() {
         <Text style={styles.cardTitle} numberOfLines={1}>
           {item.title}
         </Text>
+        
 
         <View style={styles.actions}>
           <Pressable
@@ -141,6 +145,13 @@ export default function HomeDashboard() {
     <Text style={styles.dateText} numberOfLines={1}>
       {todayLabel}
     </Text>
+    <Button
+  title="Try!"
+  onPress={() => {
+    Sentry.captureException(new Error("First error"));
+  }}
+/>
+
 
     <View style={styles.topbarRight}>
       <Pressable onPress={() => router.push("/profile")} style={styles.topbarIcon}>
