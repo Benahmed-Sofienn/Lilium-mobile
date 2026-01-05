@@ -8,21 +8,21 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://10.212.64.26:5000",
+        "EXPO_PUBLIC_API_URL": "http://10.128.162.26:5000",
         "EXPO_PUBLIC_API_PREFIX": "/api/auth"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://10.212.64.26:5000",
+        "EXPO_PUBLIC_API_URL": "http://10.128.162.26:5000",
         "EXPO_PUBLIC_API_PREFIX": "/api/auth"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://10.212.64.26.com",
+        "EXPO_PUBLIC_API_URL": "https://10.128.162.26.com",
         "EXPO_PUBLIC_API_PREFIX": "/api/auth"
       }
     }

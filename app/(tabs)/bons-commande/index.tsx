@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -7,7 +7,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,6 +21,8 @@ import { useAuth } from "../../../src/auth/AuthContext";
 import { COLORS, RADIUS, SPACING, TYPO } from "../../../src/ui/theme";
 import { AppHeader } from "../../../src/components/AppHeader";
 import { AppCard } from "../../../src/components/AppCard";
+import { AppSelect, AppSelectOption } from "../../../src/components/AppSelect";
+
 
 type UserRole = "Commercial" | "Superviseur" | "Countrymanager";
 type ScopeUser = { id: number; label: string };
@@ -100,76 +101,29 @@ function renderProduitsWithCounts(text: string) {
   );
 }
 
-function SelectModal(props: {
-  visible: boolean;
-  title: string;
-  placeholderSearch?: string;
-  items: Array<{ key: string; label: string }>;
-  onClose: () => void;
-  onPick: (key: string) => void;
-  searchable?: boolean;
-}) {
-  const insets = useSafeAreaInsets();
-  const [q, setQ] = useState("");
 
-  useEffect(() => {
-    if (!props.visible) setQ("");
-  }, [props.visible]);
-
-  const filtered = useMemo(() => {
-    if (!props.searchable) return props.items;
-    const qq = q.trim().toLowerCase();
-    if (!qq) return props.items;
-    return props.items.filter((x) => x.label.toLowerCase().includes(qq));
-  }, [props.items, props.searchable, q]);
-
-  return (
-    <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
-      <View style={styles.modalBackdrop}>
-        <View style={[styles.modalSheet, { paddingBottom: Math.max(12, insets.bottom) }]}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{props.title}</Text>
-            <Pressable onPress={props.onClose} hitSlop={10} style={styles.modalCloseBtn}>
-              <Ionicons name="close" size={22} color={COLORS.text} />
-            </Pressable>
-          </View>
-
-          {props.searchable && (
-            <View style={styles.modalSearchRow}>
-              <Ionicons name="search" size={18} color={COLORS.textMuted} />
-              <TextInput
-                value={q}
-                onChangeText={setQ}
-                placeholder={props.placeholderSearch || b("Rechercher...", "بحث...")}
-                placeholderTextColor={COLORS.textMuted}
-                style={styles.modalSearch}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-            </View>
-          )}
-
-          <FlatList
-            data={filtered}
-            keyExtractor={(it) => it.key}
-            keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => (
-              <Pressable style={styles.modalItem} onPress={() => props.onPick(item.key)}>
-                <Text style={styles.modalItemText}>{item.label}</Text>
-              </Pressable>
-            )}
-            ItemSeparatorComponent={() => <View style={styles.modalSep} />}
-          />
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 export default function BonsCommandeIndex() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { state } = useAuth();
+
+  const meId =
+  state.status === "signedIn" ? Number((state.user as any)?.id ?? 0) : 0;
+
+const meLabel = useMemo(() => {
+  const u: any = state.status === "signedIn" ? state.user : null;
+  const raw =
+    u?.fullName ??
+    u?.full_name ??
+    u?.name ??
+    u?.username ??
+    u?.email ??
+    "";
+  const s = String(raw || "").trim();
+  return s || (meId ? `User #${meId}` : "—");
+}, [state.status, state.user, meId]);
+
 
   const rawRole =
     state.status === "signedIn"
@@ -188,7 +142,15 @@ export default function BonsCommandeIndex() {
   const [dateTo, setDateTo] = useState<Date>(() => new Date());
 
   // Filters
-  const [selectedUser, setSelectedUser] = useState<ScopeUser | null>(null); // null = Tous
+  const defaultSelectedUserId = useMemo(() => (meId ? meId : 0), [meId]);
+const [selectedUserId, setSelectedUserId] = useState<number>(defaultSelectedUserId);
+
+
+
+useEffect(() => {
+  if (defaultSelectedUserId) setSelectedUserId(defaultSelectedUserId);
+}, [defaultSelectedUserId]);
+
   const [status, setStatus] = useState<string | null>(null); // null = Tous
 
   // User modal (server-backed search)
@@ -196,7 +158,7 @@ export default function BonsCommandeIndex() {
   const [userQuery, setUserQuery] = useState("");
   const [scopeUsers, setScopeUsers] = useState<ScopeUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const userSearchTimer = useRef<any>(null);
+
 
   // Status modal
   const [statusModalVisible, setStatusModalVisible] = useState(false);
@@ -214,38 +176,39 @@ export default function BonsCommandeIndex() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const statusOptions = useMemo(
-    () => [
-      { key: "all", label: b("Tous", "الكل") },
-      { key: "initial", label: b("initial", statusAr("initial")) },
-      { key: "confirme", label: b("confirme", statusAr("confirme")) },
-      { key: "en cours", label: b("en cours", statusAr("en cours")) },
-      { key: "traite", label: b("traite", statusAr("traite")) },
-    ],
-    []
-  );
+  const statusOptions: AppSelectOption[] = useMemo(
+  () => [
+    { id: "", label: b("Tous", "الكل"), keywords: "tous الكل all" },
+    { id: "initial", label: b("initial", statusAr("initial")) },
+    { id: "confirme", label: b("confirme", statusAr("confirme")) },
+    { id: "en cours", label: b("en cours", statusAr("en cours")) },
+    { id: "traite", label: b("traite", statusAr("traite")) },
+  ],
+  []
+);
+
 
   const statusDisplay = useMemo(() => {
     if (!status) return b("Tous", "الكل");
     return b(status, statusAr(status));
   }, [status]);
 
-  const fetchScopeUsers = useCallback(
-    async (q: string) => {
-      if (!showUserFilter) return;
-      setLoadingUsers(true);
-      try {
-        const res = await api.get("/bons-commande/scope-users", {
-          params: { q, limit: 100 },
-        });
-        const arr = Array.isArray(res.data) ? (res.data as ScopeUser[]) : [];
-        setScopeUsers(arr);
-      } finally {
-        setLoadingUsers(false);
-      }
-    },
-    [showUserFilter]
-  );
+  const loadScopeUsers = useCallback(async () => {
+  if (!showUserFilter) return;
+  try {
+    const res = await api.get("/bons-commande/scope-users", { params: { q: "", limit: 200 } });
+    const arr = Array.isArray(res.data) ? (res.data as ScopeUser[]) : [];
+    setScopeUsers(arr);
+  } catch {
+    setScopeUsers([]);
+  }
+}, [showUserFilter]);
+
+useEffect(() => {
+  if (state.status !== "signedIn") return;
+  loadScopeUsers();
+}, [state.status, loadScopeUsers]);
+
 
   const buildListParams = useCallback(
     (cursor?: number | null) => {
@@ -258,14 +221,15 @@ export default function BonsCommandeIndex() {
       if (cursor) params.cursor = cursor;
 
       if (showUserFilter) {
-        params.selectedUserId = selectedUser?.id ? selectedUser.id : 0; // null => Tous
-      }
+  params.selectedUserId = selectedUserId || 0; // 0 => Tous
+}
+
 
       if (status) params.status = status; // null => Tous
 
       return params;
     },
-    [dateFrom, dateTo, selectedUser, showUserFilter, status]
+    [dateFrom, dateTo, selectedUserId, showUserFilter, status]
   );
 
   const parseListResponse = (data: ListResponse) => {
@@ -274,6 +238,36 @@ export default function BonsCommandeIndex() {
     }
     return { items: data.items || [], nextCursor: data.nextCursor ?? null };
   };
+
+  const canEditStatus = useMemo(() => {
+  return roleKey === "countrymanager" || roleKey === "superviseur";
+}, [roleKey]);
+
+const onAdvanceStatus = useCallback(
+  async (item: BonCommandeItem, targetStatus: string) => {
+    // sécurité: avance uniquement d'un cran
+    const curIdx = STATUS_STEPS.findIndex((x) => x === item.status);
+    const tgtIdx = STATUS_STEPS.findIndex((x) => x === targetStatus);
+    if (curIdx < 0 || tgtIdx !== curIdx + 1) return;
+
+    // Optimistic UI
+    setItems((prev) =>
+      prev.map((it) => (it.id === item.id ? { ...it, status: targetStatus } : it))
+    );
+
+    try {
+      await api.patch(`/bons-commande/${item.id}/status`, { status: targetStatus });
+    } catch (e) {
+      // rollback si erreur
+      setItems((prev) =>
+        prev.map((it) => (it.id === item.id ? { ...it, status: item.status } : it))
+      );
+    }
+  },
+  []
+);
+
+
 
   const fetchFirstPage = useCallback(async () => {
     setLoadingFirst(true);
@@ -325,23 +319,8 @@ export default function BonsCommandeIndex() {
     fetchFirstPage();
   }, [state.status, fetchFirstPage]);
 
-  // When opening user modal, load users (empty query)
-  useEffect(() => {
-    if (!userModalVisible) return;
-    fetchScopeUsers(userQuery.trim());
-  }, [userModalVisible, fetchScopeUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced server search for users
-  useEffect(() => {
-    if (!userModalVisible) return;
-    if (userSearchTimer.current) clearTimeout(userSearchTimer.current);
-    userSearchTimer.current = setTimeout(() => {
-      fetchScopeUsers(userQuery.trim());
-    }, 250);
-    return () => {
-      if (userSearchTimer.current) clearTimeout(userSearchTimer.current);
-    };
-  }, [userQuery, userModalVisible, fetchScopeUsers]);
+ 
 
   const openDatePicker = (target: "from" | "to") => {
     if (Platform.OS === "android") {
@@ -396,30 +375,32 @@ export default function BonsCommandeIndex() {
 
             return (
               <View key={s} style={styles.statusStepWrap}>
-                <View
-                  style={[
-                    styles.statusPill,
-                    isActive && styles.statusPillActive,
-                    isDone && styles.statusPillDone,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.statusPillText,
-                      (isActive || isDone) && styles.statusPillTextActive,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {b(s, statusAr(s))}
-                  </Text>
-                </View>
+                <Pressable
+  disabled={!canEditStatus || idx !== activeIdx + 1}
+  onPress={() => onAdvanceStatus(item, s)}
+  style={[
+    styles.statusPill,
+    isDone && styles.statusPillDone,      // previous steps
+    isActive && styles.statusPillActive,  // current step
+    // IMPORTANT: no style for "next clickable"
+  ]}
+>
+  <Text style={[styles.statusFr, (isActive) && styles.statusTextActive]} numberOfLines={1}>
+    {s}
+  </Text>
+  <Text style={[styles.statusAr, (isActive) && styles.statusTextActive]} numberOfLines={1}>
+    {statusAr(s)}
+  </Text>
+</Pressable>
+
                 {idx < STATUS_STEPS.length - 1 && (
                   <Ionicons
-                    name="arrow-forward"
-                    size={14}
-                    color={COLORS.textMuted}
-                    style={{ marginHorizontal: 6 }}
-                  />
+  name="arrow-forward"
+  size={12}
+  color={COLORS.textMuted}
+  style={{ marginHorizontal: 4, flexShrink: 0 }}
+/>
+
                 )}
               </View>
             );
@@ -453,10 +434,25 @@ export default function BonsCommandeIndex() {
     );
   };
 
-  const userItemsForModal = useMemo(() => {
-    const base = scopeUsers.map((u) => ({ key: String(u.id), label: u.label }));
-    return [{ key: "0", label: b("Tous", "الكل") }, ...base];
-  }, [scopeUsers]);
+  const userOptions: AppSelectOption[] = useMemo(() => {
+  const opts: AppSelectOption[] = [];
+  if (!meId) return opts;
+
+  // Garder "Tous" uniquement si le filtre user est visible (superviseur/countrymanager)
+  if (showUserFilter) {
+    opts.push({ id: 0, label: b("Tous", "الكل"), keywords: "tous الكل all" });
+  }
+
+  // IMPORTANT: pas de "Moi | أنا" => on met le NOM réel
+  opts.push({ id: meId, label: meLabel, keywords: meLabel.toLowerCase() });
+
+  for (const u of scopeUsers) {
+    if (u.id === meId) continue;
+    opts.push({ id: u.id, label: u.label, keywords: u.label.toLowerCase() });
+  }
+  return opts;
+}, [meId, meLabel, showUserFilter, scopeUsers]);
+
 
   const statusItemsForModal = useMemo(() => {
     return statusOptions.map((x) => ({ key: x.key, label: x.label }));
@@ -466,50 +462,53 @@ export default function BonsCommandeIndex() {
     <View style={{ paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg, paddingBottom: SPACING.md }}>
       <AppCard>
         {showUserFilter && (
-          <>
-            <Text style={styles.filterLabel}>{b("Choisir un utilisateur", "اختيار مستخدم")}</Text>
-            <Pressable style={styles.field} onPress={() => setUserModalVisible(true)}>
-              <Text style={styles.fieldText} numberOfLines={1}>
-                {selectedUser?.label || b("Tous", "الكل")}
-              </Text>
-              <Ionicons name="chevron-down" size={18} color={COLORS.textMuted} />
-            </Pressable>
+  <>
+    <AppSelect
+      title="Utilisateur"
+      titleAr="مستخدم"
+      value={selectedUserId}
+      options={userOptions}
+      allowClear={false}
+      onChange={(id) => setSelectedUserId(Number(id ?? 0))}
+    />
+    <View style={{ height: SPACING.md }} />
+  </>
+)}
 
-            <View style={{ height: SPACING.md }} />
-          </>
-        )}
 
-        <View style={styles.row3}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.filterLabelSmall}>{b("Du", "من")}</Text>
-            <Pressable style={styles.field} onPress={() => openDatePicker("from")}>
-              <Text style={styles.fieldText}>{formatFRDate(dateFrom)}</Text>
-              <Ionicons name="calendar-outline" size={18} color={COLORS.textMuted} />
-            </Pressable>
-          </View>
+   {/* Ligne Statut (seule) */}
+<View style={{ marginBottom: SPACING.sm }}>
+  <AppSelect
+    title="Statut"
+    titleAr="الحالة"
+    value={status ?? ""}
+    options={statusOptions}
+    allowClear={false}
+    onChange={(id) => setStatus(String(id ?? "") || null)}
+  />
+</View>
 
-          <View style={{ width: SPACING.sm }} />
+{/* Ligne Du / Au (Pressable comme actuellement) */}
+<View style={styles.row3}>
+  <View style={{ flex: 1 }}>
+    <Text style={styles.filterLabelSmall}>{b("Du", "من")}</Text>
+    <Pressable style={styles.field} onPress={() => openDatePicker("from")}>
+      <Text style={styles.fieldText}>{formatFRDate(dateFrom)}</Text>
+      <Ionicons name="calendar-outline" size={18} color={COLORS.textMuted} />
+    </Pressable>
+  </View>
 
-          <View style={{ flex: 1 }}>
-            <Text style={styles.filterLabelSmall}>{b("Au", "إلى")}</Text>
-            <Pressable style={styles.field} onPress={() => openDatePicker("to")}>
-              <Text style={styles.fieldText}>{formatFRDate(dateTo)}</Text>
-              <Ionicons name="calendar-outline" size={18} color={COLORS.textMuted} />
-            </Pressable>
-          </View>
+  <View style={{ width: SPACING.sm }} />
 
-          <View style={{ width: SPACING.sm }} />
+  <View style={{ flex: 1 }}>
+    <Text style={styles.filterLabelSmall}>{b("Au", "إلى")}</Text>
+    <Pressable style={styles.field} onPress={() => openDatePicker("to")}>
+      <Text style={styles.fieldText}>{formatFRDate(dateTo)}</Text>
+      <Ionicons name="calendar-outline" size={18} color={COLORS.textMuted} />
+    </Pressable>
+  </View>
+</View>
 
-          <View style={{ flex: 1 }}>
-            <Text style={styles.filterLabelSmall}>{b("Statut", "الحالة")}</Text>
-            <Pressable style={styles.field} onPress={() => setStatusModalVisible(true)}>
-              <Text style={styles.fieldText} numberOfLines={1}>
-                {statusDisplay}
-              </Text>
-              <Ionicons name="chevron-down" size={18} color={COLORS.textMuted} />
-            </Pressable>
-          </View>
-        </View>
 
         <Pressable style={styles.searchBtn} onPress={fetchFirstPage}>
           <Ionicons name="search" size={18} color={COLORS.textOnBrand} />
@@ -559,71 +558,8 @@ export default function BonsCommandeIndex() {
         }
       />
 
-      {/* User modal (scroll + search) */}
-      <Modal
-        visible={userModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setUserModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalSheet, { paddingBottom: Math.max(12, insets.bottom) }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{b("Utilisateurs", "المستخدمون")}</Text>
-              <Pressable onPress={() => setUserModalVisible(false)} hitSlop={10} style={styles.modalCloseBtn}>
-                <Ionicons name="close" size={22} color={COLORS.text} />
-              </Pressable>
-            </View>
-
-            <View style={styles.modalSearchRow}>
-              <Ionicons name="search" size={18} color={COLORS.textMuted} />
-              <TextInput
-                value={userQuery}
-                onChangeText={setUserQuery}
-                placeholder={b("Rechercher un utilisateur...", "ابحث عن مستخدم...")}
-                placeholderTextColor={COLORS.textMuted}
-                style={styles.modalSearch}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-              {loadingUsers ? <ActivityIndicator style={{ marginLeft: 8 }} color={COLORS.brand} /> : null}
-            </View>
-
-            <FlatList
-              data={userItemsForModal}
-              keyExtractor={(it) => it.key}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => (
-                <Pressable
-                  style={styles.modalItem}
-                  onPress={() => {
-                    const id = Number(item.key);
-                    if (!id) setSelectedUser(null);
-                    else setSelectedUser({ id, label: item.label });
-                    setUserModalVisible(false);
-                  }}
-                >
-                  <Text style={styles.modalItemText}>{item.label}</Text>
-                </Pressable>
-              )}
-              ItemSeparatorComponent={() => <View style={styles.modalSep} />}
-            />
-          </View>
-        </View>
-      </Modal>
-
-      {/* Status modal */}
-      <SelectModal
-        visible={statusModalVisible}
-        title={b("Statut", "الحالة")}
-        items={statusItemsForModal}
-        searchable={false}
-        onClose={() => setStatusModalVisible(false)}
-        onPick={(key) => {
-          setStatusModalVisible(false);
-          setStatus(key === "all" ? null : key);
-        }}
-      />
+   
+    
 
       {/* iOS date modal */}
       {Platform.OS === "ios" && (
@@ -766,22 +702,61 @@ const styles = StyleSheet.create({
   },
 
   statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: SPACING.md,
-    flexWrap: "wrap",
-  },
-  statusStepWrap: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
-  statusPill: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: COLORS.cardAlt,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
+  flexDirection: "row",
+  alignItems: "center",
+  marginTop: SPACING.md,
+  flexWrap: "nowrap",            // IMPORTANT: une seule ligne
+},
+statusStepWrap: {
+  flexDirection: "row",
+  alignItems: "center",
+  flex: 1,                       // chaque step prend sa part
+},
+
+
+statusPill: {
+  flex: 1,
+  minWidth: 0,
+  paddingVertical: 6,
+  paddingHorizontal: 6,
+  borderRadius: 999,
+  backgroundColor: COLORS.cardAlt,  // this is your light gray “future” default
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  alignItems: "center",
+  justifyContent: "center",
+},
+
+// PREVIOUS (done): your requested neutral outlined style
+statusPillDone: {
+  borderWidth: 2,
+  borderColor: COLORS.border,          // keep neutral (not green)
+  backgroundColor: "rgba(0,0,0,0.02)",
+},
+
+// CURRENT (active): keep what you already had (light green + green outline)
+
+statusPillNextClickable: {
+  borderWidth: 2,
+  backgroundColor: "rgba(0,0,0,0.02)", 
+},
+
+statusFr: {
+  fontSize: 10,
+  fontWeight: "900",
+  color: COLORS.textMuted,
+},
+statusAr: {
+  fontSize: 10,
+  fontWeight: "900",
+  color: COLORS.textMuted,
+},
+statusTextActive: {
+  color: COLORS.text,
+},
+
+
   statusPillActive: { backgroundColor: COLORS.brandSoft, borderColor: COLORS.brand },
-  statusPillDone: { backgroundColor: "rgba(50,161,55,0.18)", borderColor: COLORS.brandDark },
   statusPillText: { color: COLORS.textMuted, fontWeight: "800", fontSize: 11 },
   statusPillTextActive: { color: COLORS.text, fontWeight: "900" },
 
@@ -830,22 +805,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  modalSearchRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 10,
-    height: 48,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.bg,
-    marginBottom: SPACING.sm,
-  },
-  modalSearch: { flex: 1, color: COLORS.text, fontWeight: "700" },
-  modalItem: { paddingVertical: 12, paddingHorizontal: 8 },
-  modalItemText: { color: COLORS.text, fontWeight: "800" },
-  modalSep: { height: 1, backgroundColor: COLORS.border },
+
 
   iosDateSheet: {
     backgroundColor: COLORS.card,

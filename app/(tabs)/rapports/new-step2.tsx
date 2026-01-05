@@ -3,67 +3,59 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
-  FlatList,
   ActivityIndicator,
 } from "react-native";
+
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Picker } from "@react-native-picker/picker";
+import { AppSelect, type AppSelectOption } from "../../../src/components/AppSelect";
 
 import { api } from "../../../src/api/client";
 import { AppHeader } from "../../../src/components/AppHeader";
 import { AppCard } from "../../../src/components/AppCard";
 import { COLORS, SPACING, TYPO, RADIUS, FIELD } from "../../../src/ui/theme";
 
-type Option = { id: number; label: string };
+
 
 type ProductDraft = {
   _key: string;              // stable React key
   produit_id: number | null;
-  prescription: boolean;
-  rentabilite: number; // 0..5
+  rentabilite: number;       // 0..5
   note: string;
 };
 
 type VisitDraft = {
   _key: string;              // stable React key
   medecin_id: number | null;
-  priority: number; // 0..5
-  observation: string;
   products: ProductDraft[];
 };
 
-
-type LevelOption = { value: number; label: string };
-
-const LEVEL_OPTIONS: LevelOption[] = [
-  { value: 0, label: "Première visite (connaît)" },
-  { value: 1, label: "Utilise beaucoup (ambassadeur)" },
-  { value: 2, label: "Utilise nos produits + concurrents" },
-  { value: 3, label: "Premier essai (utilise un peu)" },
-  { value: 4, label: "Évalue" },
-  { value: 5, label: "S'intéresse (visite mais pas de prescription)" },
+const RENTABILITE_OPTIONS: AppSelectOption[] = [
+  { id: 0, label: "Première visite (connaît) | زيارة أولى للطبيب" },
+  { id: 1, label: "Utilise beaucoup (ambassadeur) | يستعمل منتوجاتنا بكثرة" },
+  { id: 2, label: "Utilise nos produits + concurrents | يستعمل منتوجاتنا و المنافسة" },
+  { id: 3, label: "Premier essai (utilise un peu) | وصف للمرة الاولى و بشكل ضعيف" },
+  { id: 4, label: "Évalue | (يقيم) يقول يكتب و لا توجد وصفات" },
+  { id: 5, label: "S'intéresse (visite mais pas de prescription) | مهتم ( تمت الزيارة و لا يوجد وصف )" },
 ];
 
-const getLevelLabel = (v: number) =>
-  LEVEL_OPTIONS.find((x) => x.value === v)?.label ?? String(v);
+
+
+
 
 const makeKey = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
 const makeEmptyProduct = (): ProductDraft => ({
   _key: makeKey(),
   produit_id: null,
-  prescription: false,
   rentabilite: 0,
   note: "",
 });
@@ -71,10 +63,9 @@ const makeEmptyProduct = (): ProductDraft => ({
 const makeEmptyVisit = (): VisitDraft => ({
   _key: makeKey(),
   medecin_id: null,
-  priority: 0,
-  observation: "",
   products: [],
 });
+
 
 
 function toInt(v: any): number | null {
@@ -82,146 +73,7 @@ function toInt(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/**
- * Searchable Select (Modal)
- * - Remplace Picker pour Médecins / Produits avec une barre de recherche
- */
-function SearchSelect({
-  title,
-  titleAr,
-  placeholder,
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  title: string;
-  titleAr?: string;
-  placeholder: string;
-  value: number | null;
-  options: Option[];
-  disabled?: boolean;
-  onChange: (id: number | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  
 
-
-  const selectedLabel = useMemo(() => {
-    const found = options.find((o) => o.id === value);
-    return found?.label ?? "";
-  }, [options, value]);
-
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(query));
-  }, [options, q]);
-
-  const openModal = () => {
-    if (disabled) return;
-    setQ("");
-    setOpen(true);
-  };
-
-  return (
-    <>
-      <Pressable
-        onPress={openModal}
-        style={[styles.select, disabled ? styles.selectDisabled : null]}
-        accessibilityRole="button"
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={styles.selectLabel}>
-            {titleAr ? `${title} | ${titleAr}` : title}
-          </Text>
-          <Text style={[styles.selectValue, !selectedLabel ? styles.selectPlaceholder : null]}>
-            {selectedLabel || placeholder}
-          </Text>
-        </View>
-        <Ionicons name="chevron-down" size={18} color={COLORS.textMuted} />
-      </Pressable>
-
-      <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
-        <SafeAreaView style={styles.modalRoot}>
-          <View style={styles.modalHeader}>
-            <Pressable onPress={() => setOpen(false)} style={styles.iconBtn} hitSlop={10}>
-              <Ionicons name="close" size={22} color={COLORS.text} />
-            </Pressable>
-
-            <View style={{ flex: 1, alignItems: "center" }}>
-              <Text style={styles.modalTitle}>{title}</Text>
-              {titleAr ? (
-                <Text style={styles.modalTitleAr}>{titleAr}</Text>
-              ) : null}
-            </View>
-
-            <Pressable
-  onPress={() => {
-    setOpen(false);
-    requestAnimationFrame(() => onChange(null));
-  }}
-  style={styles.modalClear}
-  hitSlop={10}
->
-
-              <Text style={styles.modalClearText}>Effacer | مسح</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.searchBox}>
-            <Ionicons name="search" size={18} color={COLORS.textMuted} />
-            <TextInput
-              value={q}
-              onChangeText={setQ}
-              placeholder="Rechercher... | بحث..."
-              placeholderTextColor={COLORS.textMuted}
-              style={styles.searchInput}
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-          </View>
-
-          <FlatList
-            data={filtered}
-            keyExtractor={(item) => String(item.id)}
-            keyboardShouldPersistTaps="handled"
-            initialNumToRender={18}
-            maxToRenderPerBatch={24}
-            windowSize={8}
-            removeClippedSubviews={Platform.OS === "android"}
-            contentContainerStyle={{ padding: 14, paddingBottom: 28 }}
-            ItemSeparatorComponent={() => <View style={styles.sep} />}
-            renderItem={({ item }) => {
-              const isSelected = item.id === value;
-              return (
-                <Pressable
-                  onPress={() => {
-  // Close first (stabilizes Android Modal transition), then update parent state
-  setOpen(false);
-  requestAnimationFrame(() => onChange(item.id));
-}}
-                  style={[styles.optionRow, isSelected ? styles.optionRowSelected : null]}
-                >
-                  <Text style={styles.optionText} numberOfLines={2}>
-                    {item.label}
-                  </Text>
-                  {isSelected ? <Ionicons name="checkmark" size={20} color={COLORS.brand} /> : null}
-                </Pressable>
-              );
-            }}
-            ListEmptyComponent={
-              <View style={{ paddingTop: 24 }}>
-                <Text style={{ color: COLORS.textMuted }}>Aucun résultat. | لا نتائج</Text>
-              </View>
-            }
-          />
-        </SafeAreaView>
-      </Modal>
-    </>
-  );
-}
 
 export default function RapportPhase2() {
   const router = useRouter();
@@ -230,18 +82,22 @@ export default function RapportPhase2() {
 
 
   const [loadingRefs, setLoadingRefs] = useState(true);
-  const [medecins, setMedecins] = useState<Option[]>([]);
-  const [produits, setProduits] = useState<Option[]>([]);
+  const [medecins, setMedecins] = useState<AppSelectOption[]>([]);
+  const [produits, setProduits] = useState<AppSelectOption[]>([]);
   const [reloadTick, setReloadTick] = useState(0);
 
-  const [dayObservation, setDayObservation] = useState("");
   const [visits, setVisits] = useState<VisitDraft[]>([makeEmptyVisit()]);
   const [openVisitIdx, setOpenVisitIdx] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
   const medecinLabelById = useMemo(() => {
     const m = new Map<number, string>();
-    medecins.forEach((x) => m.set(x.id, x.label));
+    medecins.forEach((x) => {
+  const key = Number(x.id);
+  const v = x.subtitle ? `${x.label} — ${x.subtitle}` : x.label;
+  m.set(key, v);
+});
+ 
     return m;
   }, [medecins]);
 
@@ -278,14 +134,36 @@ export default function RapportPhase2() {
 
       setMedecins(
   (rawMedecins || [])
-    .map((x: any) => ({
-      id: Number(x.id),
-      label:
-        String(x.label || "").trim() ||
-        [x.nom, x.specialite, [x.wilaya, x.commune].filter(Boolean).join("/")].filter(Boolean).join(" — "),
-    }))
-    .filter((o: any) => Number.isFinite(o.id) && o.label)
+    .map((x: any): AppSelectOption | null => {
+      const id = Number(x.id);
+      if (!Number.isFinite(id)) return null;
+
+      const nom = String(x.nom ?? x.name ?? "").trim();
+      const specialite = String(
+        x.specialite ??
+          x.specialiteLabel ??
+          x.specialiteNom ??
+          x.specialite_description ??
+          x.specialiteDescription ??
+          ""
+      ).trim();
+
+      const wilaya = String(x.wilaya ?? x.wilayaNom ?? x.wilayaLabel ?? "").trim();
+      const commune = String(x.commune ?? x.communeNom ?? x.communeLabel ?? "").trim();
+      const region = [wilaya, commune].filter(Boolean).join(" / ");
+
+      const label = [nom, specialite].filter(Boolean).join(" - ").trim() || nom || String(id);
+
+      return {
+        id,
+        label,                         // "Nom - Spécialité"
+        subtitle: region || undefined, // "Wilaya / Commune"
+        keywords: `${id} ${nom} ${specialite} ${wilaya} ${commune}`.toLowerCase(),
+      };
+    })
+    .filter(Boolean) as AppSelectOption[]
 );
+
 
 
       setProduits(
@@ -378,9 +256,7 @@ export default function RapportPhase2() {
       if (seenMed.has(v.medecin_id)) return `Visite #${i + 1}: médecin dupliqué. | طبيب مكرر`;
       seenMed.add(v.medecin_id);
 
-      if (v.priority < 0 || v.priority > 5) {
-        return `Visite #${i + 1}: priorité doit être 0..5. | الأولوية بين 0 و5`;
-      }
+ 
 
       // Require at least one product per visit (otherwise backend insert often fails)
       if (!v.products.length) {
@@ -401,39 +277,26 @@ export default function RapportPhase2() {
   };
 
   const buildVisitesFlat = () => {
-    // Flatten: each (visit x product) becomes a row (compatible with rapports_visite having one produit_id)
-    const rows: any[] = [];
-    for (const v of visits) {
-      for (const p of v.products) {
-        rows.push({
-          // send both snake_case and camelCase for backend tolerance
-          medecin_id: v.medecin_id,
-          medecinId: v.medecin_id,
-          produit_id: p.produit_id,
-          produitId: p.produit_id,
+  const rows: any[] = [];
 
-          priority: v.priority,
+  for (const v of visits) {
+    for (const p of v.products) {
+      rows.push({
+        medecin_id: v.medecin_id,
+        medecinId: v.medecin_id,
+        produit_id: p.produit_id,
+        produitId: p.produit_id,
 
-          // merge notes into observation (safe even if backend ignores extra fields)
-          observation:
-            [
-              v.observation?.trim(),
-              p.note?.trim() ? `Note produit: ${p.note.trim()}` : null,
-              typeof p.prescription === "boolean" ? `Prescrit: ${p.prescription ? "Oui" : "Non"}` : null,
-              Number.isFinite(p.rentabilite) ? `Rentabilité: ${p.rentabilite}` : null,
-            ]
-              .filter(Boolean)
-              .join("\n") || null,
-
-          // Optional extra fields (backend may ignore)
-          prescription: p.prescription,
-          rentabilite: p.rentabilite,
-          qtt: 1,
-        });
-      }
+        // optional payload fields (backend can store them in observation or ignore)
+        rentabilite: p.rentabilite,
+        note: p.note?.trim() || null,
+      });
     }
-    return rows;
-  };
+  }
+
+  return rows;
+};
+
 
   const submit = async () => {
     const err = validate();
@@ -444,19 +307,14 @@ export default function RapportPhase2() {
 
       const visites = buildVisitesFlat();
 
-      const payload = {
-        observation: dayObservation,
-        // Prefer French key; many backends use it.
-        visites,
-        // If your backend expects "visits", uncomment the next line and remove "visites" above.
-        // visits: visites,
-      };
+      const payload = { visites };
 
-      await api.put(`/rapports/today`, payload);
 
-      Alert.alert("OK", "Rapport complété (phase 2). | تم إكمال التقرير", [
-        { text: "Terminer | إنهاء", onPress: () => router.replace("/(tabs)") },
-      ]);
+      await api.put("/rapports/today", payload);
+
+// redirect to rapports list (index)
+router.replace("/rapports");
+
     } catch (err: any) {
       const status = err?.response?.status;
       const body = err?.response?.data;
@@ -507,17 +365,6 @@ export default function RapportPhase2() {
             <Text style={styles.smallMuted}>Rapport ID: {params.rapportId}</Text>
           ) : null}
 
-          <AppCard>
-            <Text style={styles.sectionTitle}>Observation générale | ملاحظة عامة</Text>
-            <TextInput
-              value={dayObservation}
-              onChangeText={setDayObservation}
-              placeholder="Observation générale... | ملاحظة عامة..."
-              placeholderTextColor={COLORS.textMuted}
-              multiline
-              style={[styles.input, { minHeight: 90, textAlignVertical: "top" }]}
-            />
-          </AppCard>
 
           {loadingRefs ? (
             <AppCard>
@@ -546,65 +393,31 @@ export default function RapportPhase2() {
                       {medLabel ? `Médecin: ${medLabel}` : "Médecin: Non sélectionné"}
                       {prodCount ? `  •  ${prodCount} produit(s)` : ""}
                     </Text>
-                    <Text style={styles.visitMeta} numberOfLines={1}>
-                      Priorité: {v.priority} — {getLevelLabel(v.priority)}
-                    </Text>
+                
                   </View>
                   <Ionicons name={isOpen ? "chevron-up" : "chevron-down"} size={18} color={COLORS.textMuted} />
                 </Pressable>
 
                 {isOpen ? (
                   <View style={{ gap: 12, paddingTop: 12 }}>
-                    <SearchSelect
-                      title="Médecin"
-                      titleAr="الطبيب"
-                      placeholder={loadingRefs ? "Chargement..." : "Sélectionner un médecin"}
-                      value={v.medecin_id}
-                      options={medecins}
-                      disabled={loadingRefs}
-                      onChange={(id) => updateVisit(idx, { medecin_id: id })}
-                    />
+                    <AppSelect
+  title="Médecin"
+  titleAr="الطبيب"
+  placeholder={loadingRefs ? "Chargement..." : "Sélectionner un médecin"}
+  value={v.medecin_id}
+  options={medecins}
+  disabled={loadingRefs}
+  showId
+  onChange={(id) => updateVisit(idx, { medecin_id: id == null ? null : Number(id) })}
+/>
 
-                    <View style={{ gap: 6 }}>
-                      <Text style={styles.fieldLabel}>Priorité (0..5) | الأولوية</Text>
-                      <View style={styles.pickerWrap}>
-                        <Picker
-                          selectedValue={v.priority}
-                          onValueChange={(val) => updateVisit(idx, { priority: Number(val) })}
-                          style={styles.picker}
-                          dropdownIconColor={COLORS.textMuted}
-                          mode={Platform.OS === "android" ? "dialog" : undefined}
-                        >
-                          {LEVEL_OPTIONS.map((o) => (
-                            <Picker.Item
-                              key={o.value}
-                              label={`${o.value}: ${o.label}`}
-                              value={o.value}
-                              color={COLORS.text}
-                            />
-                          ))}
-                        </Picker>
-                      </View>
-                    </View>
 
-                    <Text style={styles.fieldLabel}>Observation médecin | ملاحظة الطبيب</Text>
-                    <TextInput
-                      value={v.observation}
-                      onChangeText={(t) => updateVisit(idx, { observation: t })}
-                      placeholder="Observation... | ملاحظة..."
-                      placeholderTextColor={COLORS.textMuted}
-                      multiline
-                      style={[styles.input, { minHeight: 80, textAlignVertical: "top" }]}
-                    />
 
                     <View style={styles.divider} />
 
                     <View style={styles.productsHeader}>
                       <Text style={styles.sectionTitle}>Produits | منتجات</Text>
-                      <Pressable onPress={() => addProduct(idx)} style={styles.smallActionBtn}>
-                        <Ionicons name="add" size={18} color={COLORS.brand} />
-                        <Text style={styles.smallActionText}>Ajouter | إضافة</Text>
-                      </Pressable>
+                      
                     </View>
 
                     {v.products.length === 0 ? (
@@ -614,6 +427,7 @@ export default function RapportPhase2() {
                     ) : null}
 
                     {v.products.map((p, j) => (
+                      
                       <View key={p._key} style={styles.subCard}>
                         <View style={styles.subCardHeader}>
                           <Text style={styles.subCardTitle}>Produit #{j + 1} | منتج</Text>
@@ -622,44 +436,30 @@ export default function RapportPhase2() {
                           </Pressable>
                         </View>
 
-                        <SearchSelect
-                          title="Produit"
-                          titleAr="المنتج"
-                          placeholder={loadingRefs ? "Chargement..." : "Sélectionner un produit"}
-                          value={p.produit_id}
-                          options={produits}
-                          disabled={loadingRefs}
-                          onChange={(id) => updateProduct(idx, j, { produit_id: id })}
-                        />
+                        <AppSelect
+  title="Produit"
+  titleAr="المنتج"
+  placeholder={loadingRefs ? "Chargement..." : "Sélectionner un produit"}
+  value={p.produit_id}
+  options={produits}
+  disabled={loadingRefs}
+  onChange={(id) => updateProduct(idx, j, { produit_id: id == null ? null : Number(id) })}
+/>
 
-                        <View style={styles.switchRow}>
-                          <Text style={styles.fieldLabel}>Prescrit | موصوف</Text>
-                          <Switch
-                            value={p.prescription}
-                            onValueChange={(val) => updateProduct(idx, j, { prescription: val })}
-                          />
-                        </View>
+
 
                         <View style={{ gap: 6 }}>
                           <Text style={styles.fieldLabel}>Rentabilité (0..5) | الربحية</Text>
-                          <View style={styles.pickerWrap}>
-                            <Picker
-                              selectedValue={p.rentabilite}
-                              onValueChange={(val) => updateProduct(idx, j, { rentabilite: Number(val) })}
-                              style={styles.picker}
-                              dropdownIconColor={COLORS.textMuted}
-                              mode={Platform.OS === "android" ? "dialog" : undefined}
-                            >
-                              {LEVEL_OPTIONS.map((o) => (
-                                <Picker.Item
-                                  key={o.value}
-                                  label={`${o.value}: ${o.label}`}
-                                  value={o.value}
-                                  color={COLORS.text}
-                                />
-                              ))}
-                            </Picker>
-                          </View>
+                          <AppSelect
+  title="Rentabilité (0..5)"
+  titleAr="الربحية"
+  placeholder="Sélectionner..."
+  value={p.rentabilite}
+  options={RENTABILITE_OPTIONS}
+  onChange={(id) => updateProduct(idx, j, { rentabilite: Number(id ?? 0) })}
+/>
+
+
                         </View>
 
                         <Text style={styles.fieldLabel}>Note produit | ملاحظة المنتج</Text>
@@ -673,6 +473,11 @@ export default function RapportPhase2() {
                         />
                       </View>
                     ))}
+                    <Pressable onPress={() => addProduct(idx)} style={[styles.smallActionBtn, styles.addProductBottom]}>
+  <Ionicons name="add" size={18} color={COLORS.brand} />
+  <Text style={styles.smallActionText}>Ajouter | إضافة</Text>
+</Pressable>
+
 
                     <Pressable
                       onPress={() => removeVisit(idx)}
@@ -739,6 +544,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     backgroundColor: FIELD.bg,
   },
+  
 
   divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 6 },
 
@@ -829,6 +635,19 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   secondaryBtnText: { color: COLORS.brand, fontWeight: "900", fontSize: 15 },
+
+  card: {
+  backgroundColor: COLORS.card,
+  borderRadius: RADIUS.lg,
+  padding: SPACING.md,
+  borderWidth: 1,
+  borderColor: COLORS.border, 
+  gap: 10,
+},
+addProductBottom: {
+  marginTop: 10,
+  alignSelf: "flex-start",
+},
 
   dangerBtn: {
     marginTop: 6,

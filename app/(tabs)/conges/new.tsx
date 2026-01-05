@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,30 +13,23 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
+import { AppHeader } from "../../../src/components/AppHeader";
+import { AppCard } from "../../../src/components/AppCard";
+import { AppSelect } from "../../../src/components/AppSelect";
 
-// ADJUST PATH: use the SAME axios client import used in app/(tabs)/conges/index.tsx
-import { api } from "../../../src/api/client"; // e.g. "../../../lib/api" or whatever you already use
+import { api } from "../../../src/api/client";
+import { useAuth } from "../../../src/auth/AuthContext";
 
-// ADJUST PATH: use the SAME auth hook/context you already have
-import { useAuth } from "../../../src/auth/AuthContext"; // e.g. "../../../contexts/AuthContext"
+import { COLORS, SPACING, TYPO, RADIUS, FIELD } from "../../../src/ui/theme";
 
 type LeaveType = {
-  id: number;          // we coerce it
+  id: number;
   description: string;
 };
-
-
-const BRAND_GREEN = "#2E7D32";
-const CARD_BG = "#FFFFFF";
-const PAGE_BG = "#F3F5F7";
-const TEXT_DARK = "#0F172A";
-const TEXT_MUTED = "#64748B";
-const BORDER = "#E2E8F0";
-const ERROR = "#B91C1C";
 
 function pad2(n: number) {
   return n < 10 ? `0${n}` : `${n}`;
@@ -66,18 +58,16 @@ export default function NewCongeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { state } = useAuth();
-
   const user = state?.user ?? null;
 
   const backendBase = useMemo(() => {
-    // Your axios baseURL is ".../api/auth". We derive "...:5000" and then build absolute URLs.
     const base = ((api as any)?.defaults?.baseURL || "").toString();
-    const stripped = base.replace(/\/api\/auth\/?$/, "");
-    // Fallback to your known dev IP if for any reason baseURL isn't set.
-    return stripped || "http://10.31.45.26:5000";
+    const stripped = base.replace(/\/api(?:\/auth)?\/?$/, "");
+    return stripped || process.env.EXPO_PUBLIC_API_URL || "http://10.44.57.26:5000";
   }, []);
 
-  const absUrl = (path: string) => `${backendBase}${path.startsWith("/") ? path : `/${path}`}`;
+  const absUrl = (path: string) =>
+    `${backendBase}${path.startsWith("/") ? path : `/${path}`}`;
 
   const [referentielsLoading, setReferentielsLoading] = useState(true);
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
@@ -85,22 +75,27 @@ export default function NewCongeScreen() {
 
   const [startDate, setStartDate] = useState<Date>(() => normalizeToLocalNoon(new Date()));
   const [endDate, setEndDate] = useState<Date>(() => normalizeToLocalNoon(new Date()));
+  const [activePicker, setActivePicker] = useState<"start" | "end" | null>(null);
 
   const [selectedLeaveType, setSelectedLeaveType] = useState<LeaveType | null>(null);
-  const [leaveTypeModalOpen, setLeaveTypeModalOpen] = useState(false);
-
-  const [address, setAddress] = useState("");
-  const [observation, setObservation] = useState("");
   const [otherTypeText, setOtherTypeText] = useState("");
+  const [observation, setObservation] = useState("");
+  const [address, setAddress] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Date picker control
-  const [iosPickerVisible, setIosPickerVisible] = useState(false);
-  const [activePicker, setActivePicker] = useState<"start" | "end" | null>(null);
-
   const selectedIsOther = !!selectedLeaveType && isOtherType(selectedLeaveType.description);
+
+  const leaveTypeOptions = useMemo(
+    () =>
+      leaveTypes.map((lt) => ({
+        id: lt.id,
+        label: lt.description,
+        keywords: stripDiacritics(lt.description).toLowerCase(),
+      })),
+    [leaveTypes]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -111,21 +106,18 @@ export default function NewCongeScreen() {
 
       try {
         const { data } = await api.get(absUrl("/api/conges-absences/referentiels"));
-
         const raw = Array.isArray(data?.leaveTypes) ? data.leaveTypes : [];
+
         const normalized: LeaveType[] = raw
           .map((x: any) => {
-    const idNum = Number(x?.id);
-    const desc = typeof x?.description === "string" ? x.description : "";
-    if (!Number.isFinite(idNum) || !desc) return null;
-    return { id: idNum, description: desc };
-  })
-  .filter(Boolean) as LeaveType[];
+            const idNum = Number(x?.id);
+            const desc = typeof x?.description === "string" ? x.description : "";
+            if (!Number.isFinite(idNum) || !desc) return null;
+            return { id: idNum, description: desc };
+          })
+          .filter(Boolean) as LeaveType[];
 
-        // Keep ordering from backend; optionally sort alphabetically:
-        // normalized.sort((a, b) => a.description.localeCompare(b.description, "fr"));
-
-        setLeaveTypes(normalized);
+        if (mounted) setLeaveTypes(normalized);
       } catch (e: any) {
         if (mounted) {
           setReferentielsError(
@@ -143,30 +135,51 @@ export default function NewCongeScreen() {
     return () => {
       mounted = false;
     };
-  }, [backendBase]); // rebuild if base changes
+  }, [backendBase]);
 
   useEffect(() => {
-    // If user changes away from "Autre...", clear the extra field
     if (!selectedIsOther) setOtherTypeText("");
   }, [selectedIsOther]);
 
+  const initials = useMemo(() => {
+    const fn = (user?.first_name || "").trim();
+    const ln = (user?.last_name || "").trim();
+    const a = fn ? fn[0] : "";
+    const b = ln ? ln[0] : "";
+    return (a + b).toUpperCase() || "U";
+  }, [user?.first_name, user?.last_name]);
+
+  const fullName = useMemo(() => {
+    const fn = (user?.first_name || "").trim();
+    const ln = (user?.last_name || "").trim();
+    const name = `${fn} ${ln}`.trim();
+    return name || user?.username || "Utilisateur";
+  }, [user?.first_name, user?.last_name, user?.username]);
+
+  const todayNoon = useMemo(() => normalizeToLocalNoon(new Date()), []);
+  const activeDate = activePicker === "start" ? startDate : endDate;
+
+  const minStartDate = todayNoon;
+  // End date must be >= start date AND >= today
+  const minEndDate = startDate > todayNoon ? startDate : todayNoon;
+
   function openPicker(which: "start" | "end") {
     setActivePicker(which);
-    if (Platform.OS === "ios") {
-      setIosPickerVisible(true);
-    }
-    // On Android, DateTimePicker is rendered conditionally below
   }
 
   function onPickedDate(d: Date) {
     const nd = normalizeToLocalNoon(d);
 
     if (activePicker === "start") {
-      setStartDate(nd);
-      // Keep end >= start
-      if (endDate < nd) setEndDate(nd);
+      const clamped = nd < minStartDate ? minStartDate : nd;
+      setStartDate(clamped);
+
+      // Keep end >= start and >= today
+      if (endDate < clamped) setEndDate(clamped);
+      if (endDate < todayNoon) setEndDate(todayNoon);
     } else if (activePicker === "end") {
-      setEndDate(nd);
+      const clamped = nd < minEndDate ? minEndDate : nd;
+      setEndDate(clamped);
     }
   }
 
@@ -175,6 +188,9 @@ export default function NewCongeScreen() {
 
     if (!startDate || !endDate) return "Veuillez sélectionner les dates.";
     if (startDate > endDate) return "La date de début ne peut pas être après la date de fin.";
+
+    if (startDate < todayNoon) return "La date de début ne peut pas être antérieure à aujourd’hui.";
+    if (endDate < todayNoon) return "La date de fin ne peut pas être antérieure à aujourd’hui.";
 
     if (!selectedLeaveType) return "Veuillez sélectionner le type du congé.";
 
@@ -196,8 +212,6 @@ export default function NewCongeScreen() {
     setFormError(null);
 
     try {
-      // Observation formatting per your rule:
-      // "Autre type: <text>\nObservation: <existing observation>"
       const finalObservation = selectedIsOther
         ? `Autre type: ${otherTypeText.trim()}\nObservation: ${observation.trim()}`
         : observation.trim();
@@ -216,8 +230,6 @@ export default function NewCongeScreen() {
         {
           text: "OK",
           onPress: () => {
-            // Navigate back to the list screen
-            // Add a refresh param to help you trigger a refetch if you want in /conges/index.tsx
             router.replace({ pathname: "/conges", params: { refresh: String(Date.now()) } });
           },
         },
@@ -234,64 +246,43 @@ export default function NewCongeScreen() {
     }
   }
 
-  const initials = useMemo(() => {
-    const fn = (user?.first_name || "").trim();
-    const ln = (user?.last_name || "").trim();
-    const a = fn ? fn[0] : "";
-    const b = ln ? ln[0] : "";
-    return (a + b).toUpperCase() || "U";
-  }, [user?.first_name, user?.last_name]);
-
-  const fullName = useMemo(() => {
-    const fn = (user?.first_name || "").trim();
-    const ln = (user?.last_name || "").trim();
-    const name = `${fn} ${ln}`.trim();
-    return name || user?.username || "Utilisateur";
-  }, [user?.first_name, user?.last_name, user?.username]);
-
-  const activeDate = activePicker === "start" ? startDate : endDate;
-  const minEndDate = startDate;
-
   return (
-    <View style={[styles.page, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-      {/* Top bar (your exact snippet, safe-area via insets) */}
-      <View style={[styles.topbar, { paddingTop: Math.max(insets.top, 8) }]}>
-        <Pressable onPress={() => router.back()} style={styles.topbarIcon}>
-          <Ionicons name="arrow-back" size={20} color={TEXT_DARK} />
-        </Pressable>
-
-        <Text style={styles.topbarTitle}>Demande de Congé | طلب إجازة</Text>
-
-        <View style={{ width: 34 }} />
-      </View>
+    <View style={styles.page}>
+      <AppHeader title="Demande de congé" titleAr="طلب إجازة" onBack={() => router.back()} />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-          <View style={styles.card}>
-            <Text style={styles.headerTitle}>DEMANDE DE CONGÉ | طلب إجازة</Text>
-
-            {/* Error banner */}
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: Math.max(insets.bottom, SPACING.xl) },
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <AppCard>
+            {/* Errors */}
             {!!referentielsError && (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{referentielsError}</Text>
+              <View style={styles.bannerDanger}>
+                <Ionicons name="alert-circle-outline" size={18} color={COLORS.danger} />
+                <Text style={styles.bannerDangerText}>{referentielsError}</Text>
               </View>
             )}
             {!!formError && (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{formError}</Text>
+              <View style={styles.bannerDanger}>
+                <Ionicons name="alert-circle-outline" size={18} color={COLORS.danger} />
+                <Text style={styles.bannerDangerText}>{formError}</Text>
               </View>
             )}
 
             {/* Demandeur */}
             <Text style={styles.label}>Demandeur | صاحب الطلب</Text>
-            <View style={styles.demandeurRow}>
+            <View style={styles.userRow}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{initials}</Text>
               </View>
-              <Text style={styles.demandeurName}>{fullName}</Text>
+              <Text style={styles.userName}>{fullName}</Text>
             </View>
 
             {/* Dates */}
@@ -300,78 +291,71 @@ export default function NewCongeScreen() {
                 <Text style={styles.label}>Du | من</Text>
                 <Pressable
                   onPress={() => openPicker("start")}
-                  style={({ pressed }) => [styles.inputLike, pressed && styles.pressed]}
+                  style={({ pressed }) => [styles.field, pressed && styles.fieldPressed]}
                 >
-                  <Text style={styles.inputLikeText}>{formatDateFR(startDate)}</Text>
-                  <Ionicons name="calendar-outline" size={18} color={TEXT_MUTED} />
+                  <Text style={styles.fieldText}>{formatDateFR(startDate)}</Text>
+                  <Ionicons name="calendar-outline" size={18} color={COLORS.textMuted} />
                 </Pressable>
               </View>
 
-              <View style={{ width: 12 }} />
+              <View style={{ width: SPACING.md }} />
 
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Au | إلى</Text>
                 <Pressable
                   onPress={() => openPicker("end")}
-                  style={({ pressed }) => [styles.inputLike, pressed && styles.pressed]}
+                  style={({ pressed }) => [styles.field, pressed && styles.fieldPressed]}
                 >
-                  <Text style={styles.inputLikeText}>{formatDateFR(endDate)}</Text>
-                  <Ionicons name="calendar-outline" size={18} color={TEXT_MUTED} />
+                  <Text style={styles.fieldText}>{formatDateFR(endDate)}</Text>
+                  <Ionicons name="calendar-outline" size={18} color={COLORS.textMuted} />
                 </Pressable>
               </View>
             </View>
 
             {/* Type de congé */}
-            <Text style={styles.label}>Type de congé | نوع الإجازة</Text>
+            <View style={{ marginTop: SPACING.sm }}>
+              <AppSelect
+                title="Type de congé"
+                titleAr="نوع الإجازة"
+                value={selectedLeaveType?.id ?? null}
+                options={leaveTypeOptions}
+                disabled={referentielsLoading}
+                placeholder={
+                  referentielsLoading
+                    ? "Chargement..."
+                    : "Sélectionner le type du congé | اختر نوع الإجازة"
+                }
+                searchPlaceholder="Rechercher... | بحث..."
+                allowClear
+                onChange={(id) => {
+                  const picked = leaveTypes.find((x) => String(x.id) === String(id)) || null;
+                  setSelectedLeaveType(picked);
+                  setFormError(null);
+                }}
+              />
+            </View>
 
-            {referentielsLoading ? (
-              <View style={styles.loadingRow}>
-                <ActivityIndicator />
-                <Text style={styles.loadingText}>Chargement...</Text>
-              </View>
-            ) : (
-              <Pressable
-                onPress={() => setLeaveTypeModalOpen(true)}
-                style={({ pressed }) => [
-                  styles.selectBox,
-                  pressed && styles.pressed,
-                  !selectedLeaveType && styles.selectBoxPlaceholder,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.selectText,
-                    !selectedLeaveType ? { color: TEXT_MUTED } : { color: TEXT_DARK },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {selectedLeaveType?.description || "Sélectionnez le type du congé"}
-                </Text>
-                <Ionicons name="chevron-down" size={18} color={TEXT_MUTED} />
-              </Pressable>
-            )}
-
-            {/* Autre type (conditional) */}
+            {/* Autre type */}
             {selectedIsOther && (
               <>
                 <Text style={styles.label}>Autre type | نوع آخر</Text>
                 <TextInput
                   value={otherTypeText}
                   onChangeText={setOtherTypeText}
-                  placeholder="Veuillez préciser..."
-                  placeholderTextColor={TEXT_MUTED}
+                  placeholder="Veuillez préciser... | الرجاء التوضيح..."
+                  placeholderTextColor={FIELD.placeholder}
                   style={styles.input}
                 />
               </>
             )}
 
-            {/* Motif/Observation */}
+            {/* Observation */}
             <Text style={styles.label}>Observation | ملاحظات</Text>
             <TextInput
               value={observation}
               onChangeText={setObservation}
-              placeholder="Raison ou détails supplémentaires..."
-              placeholderTextColor={TEXT_MUTED}
+              placeholder="Raison ou détails supplémentaires... | السبب أو تفاصيل إضافية..."
+              placeholderTextColor={FIELD.placeholder}
               style={[styles.input, styles.textarea]}
               multiline
               textAlignVertical="top"
@@ -382,8 +366,8 @@ export default function NewCongeScreen() {
             <TextInput
               value={address}
               onChangeText={setAddress}
-              placeholder="Adresse pendant le congé..."
-              placeholderTextColor={TEXT_MUTED}
+              placeholder="Adresse pendant le congé... | العنوان أثناء الإجازة..."
+              placeholderTextColor={FIELD.placeholder}
               style={styles.input}
             />
 
@@ -399,71 +383,25 @@ export default function NewCongeScreen() {
             >
               {submitting ? (
                 <View style={styles.submitInner}>
-                  <ActivityIndicator color="#FFFFFF" />
-                  <Text style={styles.submitText}>Envoi...</Text>
+                  <ActivityIndicator color={COLORS.textOnBrand} />
+                  <Text style={styles.submitText}>Envoi... | جارٍ الإرسال...</Text>
                 </View>
               ) : (
-                <Text style={styles.submitText}>VALIDER LA DEMANDE</Text>
+                <Text style={styles.submitText}>VALIDER LA DEMANDE | تأكيد الطلب</Text>
               )}
             </Pressable>
-          </View>
+          </AppCard>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Leave types modal */}
-      <Modal visible={leaveTypeModalOpen} transparent animationType="fade" onRequestClose={() => setLeaveTypeModalOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setLeaveTypeModalOpen(false)}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Sélectionnez le type du congé</Text>
-              <Pressable onPress={() => setLeaveTypeModalOpen(false)} style={styles.modalClose}>
-                <Ionicons name="close" size={20} color={TEXT_DARK} />
-              </Pressable>
-            </View>
-
-            <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ paddingVertical: 6 }}>
-              {leaveTypes.map((lt) => {
-                const selected = selectedLeaveType?.id === lt.id;
-                return (
-                  <Pressable
-                    key={lt.id}
-                    onPress={() => {
-                      setSelectedLeaveType(lt);
-                      setLeaveTypeModalOpen(false);
-                      setFormError(null);
-                    }}
-                    style={({ pressed }) => [
-                      styles.modalItem,
-                      pressed && styles.modalItemPressed,
-                      selected && styles.modalItemSelected,
-                    ]}
-                  >
-                    <Text style={[styles.modalItemText, selected && styles.modalItemTextSelected]}>
-                      {lt.description}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-
-              {leaveTypes.length === 0 && !referentielsLoading && (
-                <View style={{ padding: 12 }}>
-                  <Text style={{ color: TEXT_MUTED }}>Aucun type de congé disponible.</Text>
-                </View>
-              )}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Date pickers */}
+      {/* Android Date picker */}
       {Platform.OS === "android" && activePicker && (
         <DateTimePicker
           value={activeDate}
           mode="date"
           display="default"
-          minimumDate={activePicker === "end" ? minEndDate : undefined}
+          minimumDate={activePicker === "start" ? minStartDate : minEndDate}
           onChange={(event, date) => {
-            // On Android, event.type can be "dismissed" or "set"
             if (event.type === "dismissed") {
               setActivePicker(null);
               return;
@@ -473,39 +411,6 @@ export default function NewCongeScreen() {
           }}
         />
       )}
-
-      {Platform.OS === "ios" && (
-        <Modal visible={iosPickerVisible} transparent animationType="slide" onRequestClose={() => setIosPickerVisible(false)}>
-          <View style={styles.iosPickerBackdrop}>
-            <View style={styles.iosPickerCard}>
-              <View style={styles.iosPickerHeader}>
-                <Text style={styles.iosPickerTitle}>
-                  {activePicker === "start" ? "Du | من" : "Au | إلى"}
-                </Text>
-                <Pressable
-                  onPress={() => {
-                    setIosPickerVisible(false);
-                    setActivePicker(null);
-                  }}
-                  style={styles.iosPickerDone}
-                >
-                  <Text style={styles.iosPickerDoneText}>OK</Text>
-                </Pressable>
-              </View>
-
-              <DateTimePicker
-                value={activeDate}
-                mode="date"
-                display="spinner"
-                minimumDate={activePicker === "end" ? minEndDate : undefined}
-                onChange={(_, date) => {
-                  if (date) onPickedDate(date);
-                }}
-              />
-            </View>
-          </View>
-        </Modal>
-      )}
     </View>
   );
 }
@@ -513,87 +418,66 @@ export default function NewCongeScreen() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: PAGE_BG,
-  },
-
-  topbar: {
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  topbarIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  topbarTitle: {
-    flex: 1,
-    textAlign: "center",
-    color: TEXT_DARK,
-    fontWeight: "700",
-    fontSize: 15,
+    backgroundColor: COLORS.bg,
   },
 
   scrollContent: {
-    padding: 14,
-  },
-
-  card: {
-    backgroundColor: CARD_BG,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-
-  headerTitle: {
-    color: BRAND_GREEN,
-    fontSize: 18,
-    fontWeight: "800",
-    textAlign: "center",
-    marginBottom: 14,
+    padding: SPACING.lg,
   },
 
   label: {
-    marginTop: 12,
-    marginBottom: 6,
-    color: TEXT_DARK,
-    fontWeight: "700",
-    fontSize: 13,
+    marginTop: SPACING.md,
+    marginBottom: SPACING.xs,
+    color: COLORS.text,
+    fontWeight: "800",
+    fontSize: TYPO.small,
   },
 
-  demandeurRow: {
+  bannerDanger: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
+    gap: 8,
+    backgroundColor: "rgba(220,38,38,0.08)",
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    backgroundColor: "#FAFAFA",
+    borderColor: "rgba(220,38,38,0.25)",
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACING.sm,
+  },
+  bannerDangerText: {
+    flex: 1,
+    color: COLORS.danger,
+    fontWeight: "800",
+    fontSize: TYPO.small,
+  },
+
+  userRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: FIELD.height,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: FIELD.radius,
+    paddingHorizontal: SPACING.md,
+    backgroundColor: COLORS.cardAlt,
   },
   avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#E8F5E9",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.brandSoft,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
+    marginRight: SPACING.sm,
   },
   avatarText: {
-    color: BRAND_GREEN,
-    fontWeight: "800",
+    color: COLORS.brandDark,
+    fontWeight: "900",
   },
-  demandeurName: {
-    color: TEXT_DARK,
-    fontWeight: "700",
+  userName: {
+    color: COLORS.text,
+    fontWeight: "800",
   },
 
   row2: {
@@ -601,64 +485,44 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  inputLike: {
+  field: {
+    height: FIELD.height,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    borderRadius: FIELD.radius,
+    paddingHorizontal: SPACING.md,
+    backgroundColor: FIELD.bg,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: "#FFFFFF",
   },
-  inputLikeText: {
-    color: TEXT_DARK,
-    fontWeight: "600",
+  fieldPressed: {
+    opacity: 0.92,
+  },
+  fieldText: {
+    color: COLORS.text,
+    fontWeight: "700",
   },
 
   input: {
+    minHeight: FIELD.height,
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    borderColor: COLORS.inputBorder,
+    borderRadius: FIELD.radius,
+    paddingHorizontal: SPACING.md,
     paddingVertical: 12,
-    backgroundColor: "#FFFFFF",
-    color: TEXT_DARK,
-    fontWeight: "600",
+    backgroundColor: FIELD.bg,
+    color: FIELD.text,
+    fontWeight: "700",
   },
   textarea: {
-    minHeight: 110,
-  },
-
-  selectBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: BRAND_GREEN,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: "#FFFFFF",
-  },
-  selectBoxPlaceholder: {
-    borderColor: BORDER,
-  },
-  selectText: {
-    flex: 1,
-    marginRight: 10,
-    fontWeight: "600",
-  },
-
-  pressed: {
-    opacity: 0.85,
+    minHeight: 120,
   },
 
   submitBtn: {
-    marginTop: 16,
-    backgroundColor: BRAND_GREEN,
-    borderRadius: 14,
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.brand,
+    borderRadius: RADIUS.md,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
@@ -667,127 +531,17 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   submitBtnPressed: {
-    opacity: 0.9,
+    opacity: 0.92,
   },
   submitText: {
-    color: "#FFFFFF",
-    fontWeight: "800",
+    color: COLORS.textOnBrand,
+    fontWeight: "900",
     letterSpacing: 0.3,
+    textAlign: "center",
   },
   submitInner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-  },
-
-  loadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-  },
-  loadingText: {
-    color: TEXT_MUTED,
-    fontWeight: "600",
-  },
-
-  errorBox: {
-    backgroundColor: "#FEF2F2",
-    borderWidth: 1,
-    borderColor: "#FCA5A5",
-    padding: 10,
-    borderRadius: 12,
-    marginBottom: 10,
-  },
-  errorText: {
-    color: ERROR,
-    fontWeight: "700",
-  },
-
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    padding: 14,
-    justifyContent: "center",
-  },
-  modalCard: {
-    backgroundColor: "#0B1220",
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-  },
-  modalHeader: {
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#0B1220",
-  },
-  modalTitle: {
-    color: "#FFFFFF",
-    fontWeight: "800",
-  },
-  modalClose: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
-  },
-  modalItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  modalItemPressed: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-  },
-  modalItemSelected: {
-    backgroundColor: "rgba(46,125,50,0.25)",
-  },
-  modalItemText: {
-    color: "#FFFFFF",
-    fontWeight: "600",
-  },
-  modalItemTextSelected: {
-    fontWeight: "900",
-  },
-
-  iosPickerBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    justifyContent: "flex-end",
-  },
-  iosPickerCard: {
-    backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingBottom: 16,
-    overflow: "hidden",
-  },
-  iosPickerHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  iosPickerTitle: {
-    color: TEXT_DARK,
-    fontWeight: "800",
-  },
-  iosPickerDone: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: "#F1F5F9",
-  },
-  iosPickerDoneText: {
-    color: TEXT_DARK,
-    fontWeight: "800",
   },
 });

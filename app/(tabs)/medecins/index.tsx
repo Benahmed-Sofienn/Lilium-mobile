@@ -13,7 +13,8 @@ import {
   Linking,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Picker } from "@react-native-picker/picker";
+import { AppSelect, type AppSelectOption } from "../../../src/components/AppSelect";
+
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
@@ -77,6 +78,77 @@ type MedecinsResponse = {
 };
 
 const PAGE_SIZE = 15;
+
+// --- Stats / segmentation (Medical vs Commercial) ---
+const COMMERCIAL_SPECIALITE_KEYWORDS = [
+  "pharmacie",
+  "grossiste",
+  "super gros",
+  "supergros",
+  "super-gros",
+];
+
+const normalizeText = (s: any) => {
+  const str = (s ?? "").toString().trim().toLowerCase();
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // remove accents
+    .replace(/\s+/g, " "); // collapse spaces
+};
+
+const getSpecialiteLabel = (m: any) => {
+  // Keep consistent with your renderItem logic:
+  // item.medecins_medecinspecialite?.description || item.specialite || ""
+  return (
+    m?.medecins_medecinspecialite?.description ||
+    m?.specialite ||
+    m?.specialité ||
+    m?.speciality ||
+    ""
+  );
+};
+
+const isCommercialSpecialite = (specialiteLabel: any) => {
+  const spec = normalizeText(specialiteLabel);
+  return COMMERCIAL_SPECIALITE_KEYWORDS.some((kw) => spec.includes(normalizeText(kw)));
+};
+
+const buildMedecinsStats = (list: any[]) => {
+  let medicalTotal = 0;
+  let commercialTotal = 0;
+
+  const medicalBySpec = new Map<string, number>();
+  const commercialBySpec = new Map<string, number>();
+
+  for (const m of list) {
+    const rawSpec = getSpecialiteLabel(m);
+    const specLabel = (rawSpec ?? "").toString().trim() || "Non renseignée";
+
+    if (isCommercialSpecialite(specLabel)) {
+      commercialTotal += 1;
+      commercialBySpec.set(specLabel, (commercialBySpec.get(specLabel) ?? 0) + 1);
+    } else {
+      medicalTotal += 1;
+      medicalBySpec.set(specLabel, (medicalBySpec.get(specLabel) ?? 0) + 1);
+    }
+  }
+
+  const sortDesc = (a: [string, number], b: [string, number]) => b[1] - a[1];
+
+  return {
+    total: list.length,
+    medicalTotal,
+    commercialTotal,
+    medicalList: Array.from(medicalBySpec.entries()).sort(sortDesc),
+    commercialList: Array.from(commercialBySpec.entries()).sort(sortDesc),
+  };
+};
+
+const formatSpecLine = (pairs: [string, number][]) =>
+  pairs.map(([name, count]) => `${count} ${name}`).join(" ; ");
+
+
+
 const b = (fr: string, ar: string) => `${fr} | ${ar}`;
 
 function formatDateFR(dateOnly?: string | null) {
@@ -134,6 +206,23 @@ export default function MedecinsIndex() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
+  const [totalItems, setTotalItems] = useState(0);
+
+type MedecinsStatsApi = {
+  total: number;
+  medical: { total: number; bySpecialite: { label: string; count: number }[] };
+  commercial: { total: number; bySpecialite: { label: string; count: number }[] };
+};
+
+const [serverStats, setServerStats] = useState<MedecinsStatsApi | null>(null);
+const [loadingServerStats, setLoadingServerStats] = useState(false);
+
+const formatApiLine = (arr?: { label: string; count: number }[]) =>
+  arr?.length ? arr.map((x) => `${x.count} ${x.label}`).join(" ; ") : "";
+
+
+  
+
   // Filters
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -141,20 +230,30 @@ export default function MedecinsIndex() {
   const [wilayaId, setWilayaId] = useState<string>("all");
   const [specialiteId, setSpecialiteId] = useState<string>("all");
   const [classification, setClassification] = useState<string>("all");
+  const [visitStatus, setVisitStatus] = useState<"all" | "visited" | "not_visited">("all");
+
+ const pageStats = useMemo(() => buildMedecinsStats(items), [items]);
+
+const medicalLine = useMemo(() => formatSpecLine(pageStats.medicalList), [pageStats.medicalList]);
+const commercialLine = useMemo(() => formatSpecLine(pageStats.commercialList), [pageStats.commercialList]);
+
+
+
 
   // "tous" | "moi" | "<userId>"
-  const [userFilter, setUserFilter] = useState<string>("moi");
-  const didInitUserFilter = useRef(false);
+  const [userFilter, setUserFilter] = useState<string>("");
+const didInitUserFilter = useRef(false);
 
-  useEffect(() => {
-    if (!signedIn || !(me as any)?.id) return;
-    if (didInitUserFilter.current) return;
+useEffect(() => {
+  if (!signedIn || !(me as any)?.id) return;
+  if (didInitUserFilter.current) return;
 
-    if (role === "Countrymanager") setUserFilter("tous");
-    else setUserFilter("moi");
+  // Default = connected user (by id). Label shown will be their name.
+  setUserFilter(String((me as any).id));
 
-    didInitUserFilter.current = true;
-  }, [signedIn, me, role]);
+  didInitUserFilter.current = true;
+}, [signedIn, me]);
+
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -167,34 +266,38 @@ export default function MedecinsIndex() {
     if (!showUserFilter) return null;
 
     if (userFilter === "tous") return null;
-    if (userFilter === "moi") return (me as any).id;
 
-    const n = Number(userFilter);
-    return Number.isFinite(n) ? n : null;
+const n = Number(userFilter);
+return Number.isFinite(n) ? n : null;
+
   }, [signedIn, me, showUserFilter, userFilter]);
 
   const buildParams = useCallback(
-    (targetPage: number) => {
-      const params: any = { page: targetPage, limit: PAGE_SIZE };
+  (targetPage: number) => {
+    const params: any = { page: targetPage, limit: PAGE_SIZE };
 
-      if (debouncedSearch) params.search = debouncedSearch;
-      if (wilayaId !== "all") params.wilaya_id = wilayaId;
-      if (specialiteId !== "all") params.specialite_id = specialiteId;
-      if (classification !== "all") params.classification = classification;
+    if (debouncedSearch) params.search = debouncedSearch;
+    if (wilayaId !== "all") params.wilaya_id = wilayaId;
+    if (specialiteId !== "all") params.specialite_id = specialiteId;
+    if (classification !== "all") params.classification = classification;
+    if (effectiveDelegueId !== null) params.delegue_id = effectiveDelegueId;
 
-      if (effectiveDelegueId) params.delegue_id = effectiveDelegueId;
+    // NEW: visit status filter
+    if (visitStatus !== "all") params.visit_status = visitStatus;
 
-      return params;
-    },
-    [debouncedSearch, wilayaId, specialiteId, classification, effectiveDelegueId]
-  );
+    return params;
+  },
+  [debouncedSearch, wilayaId, specialiteId, classification, effectiveDelegueId, visitStatus]
+);
+
 
   const loadReferentiels = useCallback(async () => {
     if (!signedIn) return;
     setLoadingRefs(true);
     try {
       const params: any = {};
-      if (effectiveDelegueId) params.delegue_id = effectiveDelegueId;
+      if (effectiveDelegueId !== null) params.delegue_id = effectiveDelegueId;
+
 
       const res = await api.get("/medecins/referentiels", { params });
       const data = res.data as Referentiels;
@@ -224,6 +327,9 @@ export default function MedecinsIndex() {
         const payload = res.data as MedecinsResponse;
         const nextItems = Array.isArray(payload?.data) ? payload.data : [];
         const meta = payload?.meta;
+        const ti = meta?.totalItems ? Number(meta.totalItems) : 0;
+setTotalItems(Number.isFinite(ti) && ti >= 0 ? ti : 0);
+
 
         const tp = meta?.totalPages ? Number(meta.totalPages) : 1;
         setTotalPages(Number.isFinite(tp) && tp > 0 ? tp : 1);
@@ -236,18 +342,38 @@ export default function MedecinsIndex() {
     [signedIn, buildParams]
   );
 
+  const loadServerStats = useCallback(async () => {
+  if (!signedIn) return;
+  setLoadingServerStats(true);
+  try {
+    // reuse your filters, but remove pagination
+    const params: any = buildParams(1);
+    delete params.page;
+    delete params.limit;
+
+    const res = await api.get("/medecins/stats", { params });
+    setServerStats(res.data as MedecinsStatsApi);
+  } finally {
+    setLoadingServerStats(false);
+  }
+}, [signedIn, buildParams]);
+
+
   useEffect(() => {
-    if (!signedIn) return;
-    setPage(1);
-    loadList(1, "replace");
-    loadReferentiels();
-  }, [signedIn, debouncedSearch, wilayaId, specialiteId, classification, effectiveDelegueId, loadList, loadReferentiels]);
+  if (!signedIn) return;
+  setPage(1);
+  loadList(1, "replace");
+loadReferentiels();
+loadServerStats();
+
+}, [signedIn, debouncedSearch, wilayaId, specialiteId, classification, effectiveDelegueId, visitStatus, loadList, loadReferentiels]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       setPage(1);
-      await Promise.all([loadList(1, "replace"), loadReferentiels()]);
+      await Promise.all([loadList(1, "replace"), loadReferentiels(), loadServerStats()]);
+
     } finally {
       setRefreshing(false);
     }
@@ -267,6 +393,78 @@ export default function MedecinsIndex() {
     const name = `${fn} ${ln}`.trim();
     return name || `User #${u.id}`;
   }, []);
+
+  const userOptions = useMemo(() => {
+  if (!signedIn || !(me as any)?.id) return [];
+
+  const meId = String((me as any).id);
+  const meLabel = fullName({ id: (me as any).id, first_name: (me as any).first_name, last_name: (me as any).last_name });
+
+  const opts: AppSelectOption[] = [];
+
+  if (role === "Countrymanager") {
+    opts.push({ id: "tous", label: b("Tous", "الكل"), keywords: "tous all" });
+  }
+
+  // Connected user (by name, not “Moi”)
+  opts.push({ id: meId, label: meLabel, keywords: meLabel });
+
+  // Other users (avoid duplicate me)
+  opts.push(
+    ...refs.users
+      .filter((u) => String(u.id) !== meId)
+      .map((u) => {
+        const label = fullName(u);
+        return { id: String(u.id), label, keywords: label };
+      })
+  );
+
+  return opts;
+}, [signedIn, me, role, refs.users, fullName]);
+
+
+const wilayaOptions = useMemo<AppSelectOption[]>(
+  () => [
+    { id: "all", label: b("Toutes", "الكل"), keywords: "toutes all" },
+    ...refs.wilayas.map((w) => ({ id: String(w.id), label: w.nom })),
+  ],
+  [refs.wilayas]
+);
+
+const visitStatusOptions = useMemo<AppSelectOption[]>(
+  () => [
+    { id: "all", label: b("Tous", "الكل"), keywords: "tous all" },
+    { id: "visited", label: b("Visité", "تمت الزيارة"), keywords: "visite visited month" },
+    { id: "not_visited", label: b("Pas visité", "لم تتم الزيارة"), keywords: "pas non not unvisited month" },
+  ],
+  []
+);
+
+
+
+const classificationOptions = useMemo<AppSelectOption[]>(() => {
+  const base = refs.classifications?.length
+    ? refs.classifications
+    : ["a", "b", "c", "d", "e", "f", "g", "p"];
+
+  return [
+    { id: "all", label: b("Toutes", "الكل"), keywords: "toutes all" },
+    ...base.map((c) => ({
+      id: String(c),
+      label: String(c).toUpperCase(),
+      keywords: String(c),
+    })),
+  ];
+}, [refs.classifications]);
+
+const specialiteOptions = useMemo<AppSelectOption[]>(
+  () => [
+    { id: "all", label: b("Toutes", "الكل"), keywords: "toutes all" },
+    ...refs.specialites.map((s) => ({ id: String(s.id), label: s.description })),
+  ],
+  [refs.specialites]
+);
+
 
   const renderItem = ({ item }: { item: Medecin }) => {
     const phone = (item.telephone || item.contact || "—") as string;
@@ -364,77 +562,85 @@ export default function MedecinsIndex() {
 
         {showUserFilter ? (
           <View style={{ marginBottom: SPACING.md }}>
-            <Text style={styles.fieldLabel}>{b("Utilisateur", "مستخدم")}</Text>
-            <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={userFilter}
-                onValueChange={(v) => setUserFilter(String(v))}
-                dropdownIconColor={COLORS.textMuted}
-                style={styles.picker}
-              >
-                {role === "Countrymanager" ? <Picker.Item label={b("Tous", "الكل")} value="tous" color={COLORS.text} /> : null}
-                <Picker.Item label={b("Moi", "أنا")} value="moi" color={COLORS.text} />
-                {refs.users.map((u) => (
-                  <Picker.Item key={u.id} label={fullName(u)} value={String(u.id)} color={COLORS.text} />
-                ))}
-              </Picker>
-            </View>
+           
+              <AppSelect
+  title="Utilisateur"
+  titleAr="مستخدم"
+  value={userFilter}
+  options={userOptions}
+  allowClear={false}
+  onChange={(v) => {
+    // disallow null; keep a valid id
+    setUserFilter(v == null ? String((me as any).id) : String(v));
+  }}
+/>
+
+           
           </View>
         ) : null}
 
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.fieldLabel}>{b("Wilaya", "ولاية")}</Text>
-            <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={wilayaId}
-                onValueChange={(v) => setWilayaId(String(v))}
-                dropdownIconColor={COLORS.textMuted}
-                style={styles.picker}
-              >
-                <Picker.Item label={b("Toutes", "الكل")} value="all" color={COLORS.text} />
-                {refs.wilayas.map((w) => (
-                  <Picker.Item key={w.id} label={w.nom} value={String(w.id)} color={COLORS.text} />
-                ))}
-              </Picker>
-            </View>
+           
+              <AppSelect
+  title="Wilaya"
+  titleAr="ولاية"
+  value={wilayaId}
+  options={wilayaOptions}
+  allowClear={true}
+  onChange={(v) => setWilayaId(v == null ? "all" : String(v))}
+/>
+
+
+         
           </View>
 
           <View style={{ width: SPACING.sm }} />
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.fieldLabel}>{b("Classification", "تصنيف")}</Text>
-            <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={classification}
-                onValueChange={(v) => setClassification(String(v))}
-                dropdownIconColor={COLORS.textMuted}
-                style={styles.picker}
-              >
-                <Picker.Item label={b("Toutes", "الكل")} value="all" color={COLORS.text} />
-                {(refs.classifications?.length ? refs.classifications : ["a", "b", "c", "d", "e", "f", "g", "p"]).map((c) => (
-                  <Picker.Item key={c} label={String(c).toUpperCase()} value={c} color={COLORS.text} />
-                ))}
-              </Picker>
-            </View>
+         
+              <AppSelect
+  title="Classification"
+  titleAr="تصنيف"
+  value={classification}
+  options={classificationOptions}
+  allowClear={true}
+  onChange={(v) => setClassification(v == null ? "all" : String(v))}
+/>
+
+
+           
           </View>
         </View>
 
         <View style={{ marginTop: SPACING.md }}>
-          <Text style={styles.fieldLabel}>{b("Spécialité", "اختصاص")}</Text>
-          <View style={styles.pickerWrap}>
-            <Picker
-              selectedValue={specialiteId}
-              onValueChange={(v) => setSpecialiteId(String(v))}
-              dropdownIconColor={COLORS.textMuted}
-              style={styles.picker}
-            >
-              <Picker.Item label={b("Toutes", "الكل")} value="all" color={COLORS.text} />
-              {refs.specialites.map((s) => (
-                <Picker.Item key={s.id} label={s.description} value={String(s.id)} color={COLORS.text} />
-              ))}
-            </Picker>
-          </View>
+       
+            <AppSelect
+  title="Spécialité"
+  titleAr="اختصاص"
+  value={specialiteId}
+  options={specialiteOptions}
+  allowClear={true}
+  onChange={(v) => setSpecialiteId(v == null ? "all" : String(v))}
+/>
+
+
+                  <View style={{ width: SPACING.sm }} />
+
+
+        <View style={{ marginBottom: SPACING.md }}>
+  <AppSelect
+    title="Visites"
+    titleAr="الزيارات"
+    value={visitStatus}
+    options={visitStatusOptions}
+    allowClear={false}
+    onChange={(v) => setVisitStatus((v == null ? "all" : String(v)) as any)}
+  />
+</View>
+
+
+         
         </View>
 
         {loadingRefs || loadingList ? (
@@ -443,8 +649,42 @@ export default function MedecinsIndex() {
             <Text style={styles.loadingText}>{b("Chargement…", "جارٍ التحميل…")}</Text>
           </View>
         ) : null}
+
+
+      </AppCard>
+
+      {/* Stats card (under filters, before list) */}
+      <AppCard style={styles.statsCard}>
+        <Text style={styles.statsHeader}>
+  {b("Résultats", "النتائج")} : {totalItems || serverStats?.total || pageStats.total}
+</Text>
+
+<Text style={styles.statsTitle}>
+  {(serverStats?.medical.total ?? pageStats.medicalTotal)} {b("Médical", "طبي")}
+</Text>
+<Text style={styles.statsLine}>
+  {formatApiLine(serverStats?.medical.bySpecialite) || medicalLine || "—"}
+</Text>
+
+<View style={{ height: SPACING.md }} />
+
+<Text style={styles.statsTitle}>
+  {(serverStats?.commercial.total ?? pageStats.commercialTotal)} {b("Commercial", "تجاري")}
+</Text>
+<Text style={styles.statsLine}>
+  {formatApiLine(serverStats?.commercial.bySpecialite) || commercialLine || "—"}
+</Text>
+
+{loadingServerStats ? (
+  <View style={{ marginTop: SPACING.md }}>
+    <ActivityIndicator color={COLORS.brand} />
+  </View>
+) : null}
+
       </AppCard>
     </View>
+
+    
   );
 
   return (
@@ -506,21 +746,6 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
 
-  pickerWrap: {
-    height: 52,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.inputBg,
-    borderWidth: 1,
-    borderColor: COLORS.inputBorder,
-    overflow: "hidden",
-    justifyContent: "center",
-    paddingHorizontal: Platform.OS === "android" ? 6 : 0,
-  },
-  picker: {
-    height: 52,
-    width: "100%",
-    color: COLORS.text, // ensures selected value is readable
-  },
 
   loadingRow: {
     flexDirection: "row",
@@ -599,4 +824,29 @@ const styles = StyleSheet.create({
 
   footer: { paddingVertical: 16 },
   footerSpace: { height: 12 },
+  statsCard: {
+  marginTop: SPACING.md,
+  padding: SPACING.lg,
+},
+
+statsHeader: {
+  fontSize: TYPO.small,
+  fontWeight: "900",
+  color: COLORS.text,
+  marginBottom: 10,
+},
+
+statsTitle: {
+  fontSize: TYPO.small,
+  fontWeight: "900",
+  color: COLORS.text,
+  marginBottom: 6,
+},
+
+statsLine: {
+  fontSize: 12,
+  fontWeight: "700",
+  color: COLORS.textMuted,
+},
+
 });

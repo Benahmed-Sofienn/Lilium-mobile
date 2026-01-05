@@ -23,7 +23,8 @@ import { AppHeader } from "../../../src/components/AppHeader";
 import { AppCard } from "../../../src/components/AppCard";
 import { RapportCard } from "../../../src/components/RapportCard";
 
-import { PickerField } from "../../../src/components/PickerField";
+import { AppSelect, type AppSelectOption } from "../../../src/components/AppSelect";
+
 import { COLORS, FIELD, SPACING, TYPO } from "../../../src/ui/theme";
 
 type UserRole = "Commercial" | "Superviseur" | "Countrymanager";
@@ -99,6 +100,9 @@ export default function RapportsIndex() {
   const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const didInitSelectedUser = React.useRef(false);
+
+
  
   
 
@@ -108,34 +112,53 @@ export default function RapportsIndex() {
     return role === "Countrymanager" || role === "Superviseur";
   }, [signedIn, role, isAdmin]);
 
-  const canNote = useMemo(() => {
-    if (!signedIn) return false;
-    if (isAdmin) return true;
-    return role === "Countrymanager" || role === "Superviseur";
-  }, [signedIn, role, isAdmin]);
 
-  const userPickerItems = useMemo(() => {
-    if (!signedIn) return [];
 
-    const base = refUsers.map((u) => ({
-      label: prettyName({ id: u.id, first_name: u.first_name, last_name: u.last_name }),
-      value: String(u.id),
-    }));
+  const canEditNote = useMemo(() => {
+  if (!signedIn) return false;
+  if (isAdmin) return true;
+  return role === "Countrymanager" || role === "Superviseur";
+}, [signedIn, role, isAdmin]);
 
-    if (isAdmin || role === "Countrymanager") {
-      return [{ label: "Tous | الكل", value: "" }, ...base];
-    }
+const canComment = useMemo(() => {
+  if (!signedIn) return false;
+  // all roles can comment once authenticated
+  return true;
+}, [signedIn]);
 
-    if (role === "Superviseur") {
-      // "Moi" first, then underusers
-      const myId = String(me!.id);
-      const rest = base.filter((x) => x.value !== myId);
-      const myLabel = "Moi | أنا";
-      return [{ label: myLabel, value: myId }, ...rest];
-    }
 
-    return base;
-  }, [signedIn, refUsers, role, isAdmin, me]);
+  const userOptions = useMemo<AppSelectOption[]>(() => {
+  if (!signedIn) return [];
+
+  const base = refUsers.map((u) => {
+    const label = prettyName({ id: u.id, first_name: u.first_name, last_name: u.last_name });
+    return { id: String(u.id), label, keywords: label };
+  });
+
+  const myId = me?.id ? String(me.id) : null;
+  const myLabel = me?.id
+    ? prettyName({ id: me.id, first_name: (me as any).first_name, last_name: (me as any).last_name })
+    : null;
+
+  // Put me first (if present in list), then the rest
+  const meOpt =
+    myId && myLabel ? [{ id: myId, label: myLabel, keywords: myLabel }] : [];
+
+  const rest = myId ? base.filter((x) => x.id !== myId) : base;
+
+  // Countrymanager/Admin can pick “Tous”
+  if (isAdmin || role === "Countrymanager") {
+    return [{ id: "tous", label: "Tous | الكل", keywords: "tous all" }, ...meOpt, ...rest];
+  }
+
+  // Superviseur: me first, then underusers (already scoped by backend referentiels)
+  if (role === "Superviseur") {
+    return [...meOpt, ...rest];
+  }
+
+  return base;
+}, [signedIn, refUsers, me, role, isAdmin]);
+
 
   const loadReferentiels = useCallback(async () => {
     if (!signedIn) return;
@@ -144,15 +167,7 @@ export default function RapportsIndex() {
     const users = (res.data?.users || []) as RefUser[];
     setRefUsers(users);
 
-    // Initialize dropdown selection once
-    const myId = String(me!.id);
-    if (isAdmin || role === "Countrymanager") {
-      setSelectedUserId(""); // Tous
-    } else if (role === "Superviseur") {
-      setSelectedUserId(myId); // Moi
-    } else {
-      setSelectedUserId(myId);
-    }
+    
   }, [signedIn, me, role, isAdmin]);
 
   const loadRapports = useCallback(async () => {
@@ -174,7 +189,6 @@ export default function RapportsIndex() {
   limit: 50,
 };
 
-console.log("GET /rapports params:", params);
 
 
       // userId optional:
@@ -182,10 +196,12 @@ console.log("GET /rapports params:", params);
       // - Superviseur: id chosen
       // - Commercial: can omit, backend will scope; but sending my id is fine
       if (canShowUserDropdown) {
-        if (selectedUserId) params.userId = selectedUserId;
-      } else if (me?.id) {
-        params.userId = String(me.id);
-      }
+  // "tous" => do not send userId
+  if (selectedUserId && selectedUserId !== "tous") params.userId = selectedUserId;
+} else if (me?.id) {
+  params.userId = String(me.id);
+}
+
 
       const res = await api.get("/rapports", { params });
 
@@ -194,7 +210,6 @@ console.log("GET /rapports params:", params);
     } catch (e: any) {
   const status = e?.response?.status;
   const data = e?.response?.data;
-  console.log("GET /rapports failed:", status, data);
 
   setErrorMsg(
     status
@@ -209,6 +224,17 @@ console.log("GET /rapports params:", params);
   }, [signedIn, fromDate, toDate, selectedUserId, canShowUserDropdown, me]);
 
   useEffect(() => {
+  if (!signedIn || !me?.id) return;
+  if (didInitSelectedUser.current) return;
+
+  if (isAdmin || role === "Countrymanager") setSelectedUserId("tous"); // default all
+  else setSelectedUserId(String(me.id)); // default = connected user id (name shown)
+
+  didInitSelectedUser.current = true;
+}, [signedIn, me, role, isAdmin]);
+
+
+  useEffect(() => {
     if (!signedIn) return;
     (async () => {
       try {
@@ -216,7 +242,6 @@ console.log("GET /rapports params:", params);
       } catch (e: any) {
   const status = e?.response?.status;
   const data = e?.response?.data;
-  console.log("GET /rapports/referentiels failed:", status, data);
   setErrorMsg(
     status
       ? `REFERENTIELS HTTP ${status} — ${data?.error || data?.message || e?.message || "Erreur"}`
@@ -330,13 +355,19 @@ console.log("GET /rapports params:", params);
       <View style={styles.content}>
         <AppCard style={styles.filtersCard}>
           {canShowUserDropdown ? (
-            <PickerField
-              label="Utilisateur | المستخدم"
-              value={selectedUserId}
-              items={userPickerItems}
-              onChange={(v) => setSelectedUserId(v)}
-            />
-          ) : null}
+  <AppSelect
+    title="Utilisateur"
+    titleAr="المستخدم"
+    value={selectedUserId}
+    options={userOptions}
+    allowClear={false} // prevents null => broken filtering
+    onChange={(v) => {
+      if (v == null) return;
+      setSelectedUserId(String(v));
+    }}
+  />
+) : null}
+
 
           <View style={styles.dateRow}>
             <View style={{ flex: 1 }}>
@@ -394,12 +425,17 @@ console.log("GET /rapports params:", params);
              return (
   <View style={{ marginTop: SPACING.md }}>
     <RapportCard
-      item={item}
-      canEditNote={canNote}              // Commercial sees stars but cannot change
-      canComment={true}                 // backend will still enforce scope
-      onSubmitComment={submitCommentInline}
-      onSetNote={async (rapportId, note) => setNote(rapportId, note)}
-    />
+  item={item}
+  canEditNote={canEditNote} // Only Superviseur/Countrymanager/Admin can edit note
+  canComment={canComment}   // Commercial can comment too
+  onSubmitComment={(text) => submitCommentInline(item.id, text)}
+  onSetNote={(rapportId, note) => {
+    // Hard-block note changes for Commercial at the screen level
+    if (!canEditNote) return;
+    setNote(rapportId, note);
+  }}
+/>
+
   </View>
 );
             }}

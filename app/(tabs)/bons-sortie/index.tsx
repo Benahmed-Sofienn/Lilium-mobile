@@ -1,17 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
   Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   View,
   Platform,
 } from "react-native";
+
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
@@ -24,8 +23,10 @@ import { useAuth } from "../../../src/auth/AuthContext";
 import { COLORS, RADIUS, SPACING, TYPO } from "../../../src/ui/theme";
 import { AppHeader } from "../../../src/components/AppHeader";
 import { AppCard } from "../../../src/components/AppCard";
+import { AppSelect, AppSelectOption } from "../../../src/components/AppSelect";
 
-type Role = "Commercial" | "Superviseur" | "Countrymanager";
+
+
 
 type BonSortieItem = {
   id: number;
@@ -42,7 +43,6 @@ type BonSortieItem = {
 };
 
 type ScopeUser = { id: number; label: string };
-type Option = { label: string; value: string | number };
 
 const b = (fr: string, ar: string) => `${fr} | ${ar}`;
 
@@ -251,123 +251,7 @@ function BonSortieCard({ item }: { item: BonSortieItem }) {
   );
 }
 
-/** ---------- Select Modal (light) ---------- */
-function SelectModal({
-  visible,
-  title,
-  options,
-  selectedValue,
-  onClose,
-  onSelect,
-}: {
-  visible: boolean;
-  title: string;
-  options: Option[];
-  selectedValue: string | number;
-  onClose: () => void;
-  onSelect: (value: string | number) => void;
-}) {
-  const [q, setQ] = useState("");
 
-  useEffect(() => {
-    if (!visible) setQ("");
-  }, [visible]);
-
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(query));
-  }, [q, options]);
-
-  const maxHeight = Math.min(520, Dimensions.get("window").height * 0.7);
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.modalOverlay} onPress={onClose}>
-        <Pressable style={styles.modalCard} onPress={() => {}}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitle}>{title}</Text>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.modalCloseBtn}>
-              <Ionicons name="close" size={22} color={COLORS.text} />
-            </Pressable>
-          </View>
-
-          <View style={styles.searchWrap}>
-            <Ionicons name="search" size={16} color={COLORS.textMuted} />
-            <TextInput
-              value={q}
-              onChangeText={setQ}
-              placeholder={b("Rechercher...", "بحث...")}
-              placeholderTextColor={COLORS.textMuted}
-              style={styles.searchInput}
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-            {q.length > 0 ? (
-              <Pressable onPress={() => setQ("")} hitSlop={10}>
-                <Ionicons name="close" size={18} color={COLORS.textMuted} />
-              </Pressable>
-            ) : null}
-          </View>
-
-          <View style={{ maxHeight }}>
-            <FlatList
-              data={filtered}
-              keyExtractor={(opt) => `${opt.value}`}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item: opt }) => {
-                const active = opt.value === selectedValue;
-                return (
-                  <Pressable
-                    style={[styles.modalOption, active ? styles.modalOptionActive : null]}
-                    onPress={() => {
-                      onSelect(opt.value);
-                      onClose();
-                      setQ("");
-                    }}
-                  >
-                    <Text style={[styles.modalOptionText, active ? styles.modalOptionTextActive : null]}>
-                      {opt.label}
-                    </Text>
-                    {active ? <Ionicons name="checkmark" size={18} color={COLORS.brand} /> : null}
-                  </Pressable>
-                );
-              }}
-              ItemSeparatorComponent={() => <View style={styles.modalSep} />}
-            />
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-function SelectField({
-  label,
-  valueLabel,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  valueLabel: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <View style={{ flex: 1 }}>
-      <Text style={styles.filterLabel}>{label}</Text>
-      <Pressable
-        onPress={disabled ? undefined : onPress}
-        style={[styles.field, disabled ? { opacity: 0.6 } : null]}
-      >
-        <Text style={styles.fieldText} numberOfLines={1}>
-          {valueLabel}
-        </Text>
-        <Ionicons name="chevron-down" size={18} color={COLORS.textMuted} />
-      </Pressable>
-    </View>
-  );
-}
 
 /** ---------- Dates ---------- */
 function DateField({
@@ -437,6 +321,19 @@ export default function BonsSortieIndex() {
   const { state } = useAuth();
   const me = (state?.user as any) || null;
 
+  const meLabel = useMemo(() => {
+  const raw =
+    me?.fullName ??
+    me?.full_name ??
+    me?.name ??
+    me?.username ??
+    me?.email ??
+    "";
+  const s = String(raw || "").trim();
+  return s || (me?.id ? `User #${me.id}` : "—");
+}, [me]);
+
+
   const roleRaw = String(me?.role ?? me?.rolee ?? "").trim();
   const roleNorm = roleRaw.toLowerCase();
   const isAdmin = !!me?.is_superuser;
@@ -460,18 +357,15 @@ export default function BonsSortieIndex() {
   const [error, setError] = useState<string | null>(null);
 
   const defaultSelectedUserId = useMemo(() => {
-    if (!me?.id) return 0;
-    if (isCountryManager || isAdmin) return 0; // Tous
-    return me.id; // Moi
-  }, [me?.id, isCountryManager, isAdmin]);
+  return me?.id ? Number(me.id) : 0;
+}, [me?.id]);
+
 
   const [selectedUserId, setSelectedUserId] = useState<number>(defaultSelectedUserId);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [startDate, setStartDate] = useState<Date>(defaultStart);
   const [endDate, setEndDate] = useState<Date>(now);
 
-  const [userModalOpen, setUserModalOpen] = useState(false);
-  const [statusModalOpen, setStatusModalOpen] = useState(false);
 
   useEffect(() => {
     setSelectedUserId(defaultSelectedUserId);
@@ -481,39 +375,39 @@ export default function BonsSortieIndex() {
     if (startDate > endDate) setEndDate(startDate);
   }, [startDate, endDate]);
 
-  const statusOptions: Option[] = useMemo(
-    () => [
-      { label: b("Tous", "الكل"), value: "" },
-      { label: b("initial", "أولي"), value: "initial" },
-      { label: b("confirme", "مؤكّد"), value: "confirme" },
-      { label: b("traite", "مُعالج"), value: "traite" },
-    ],
-    []
-  );
+  const statusOptions: AppSelectOption[] = useMemo(
+  () => [
+    { id: "", label: b("Tous", "الكل"), keywords: "tous الكل all" },
+    { id: "initial", label: b("initial", "أولي"), keywords: "initial أولي" },
+    { id: "confirme", label: b("confirme", "مؤكّد"), keywords: "confirme مؤكد" },
+    { id: "traite", label: b("traite", "مُعالج"), keywords: "traite معالج" },
+  ],
+  []
+);
 
-  const userOptions: Option[] = useMemo(() => {
-    const opts: Option[] = [];
-    if (!me?.id) return opts;
 
-    if (canPickUser) opts.push({ label: b("Tous", "الكل"), value: 0 });
-    opts.push({ label: b("Moi", "أنا"), value: me.id });
+  const userOptions: AppSelectOption[] = useMemo(() => {
+  if (!me?.id) return [];
+  const opts: AppSelectOption[] = [];
 
-    for (const u of scopeUsers) {
-      if (u.id === me.id) continue;
-      opts.push({ label: u.label, value: u.id });
-    }
-    return opts;
-  }, [me?.id, canPickUser, scopeUsers]);
+  // Countrymanager / Admin / Superviseur => peuvent choisir "Tous"
+  if (canPickUser) {
+    opts.push({ id: 0, label: b("Tous", "الكل"), keywords: "tous الكل all" });
+  }
 
-  const selectedUserLabel = useMemo(() => {
-    const opt = userOptions.find((o) => Number(o.value) === Number(selectedUserId));
-    return opt?.label || b("Sélectionner…", "اختر…");
-  }, [userOptions, selectedUserId]);
+  // IMPORTANT: plus de "Moi | أنا" => on met le NOM réel
+  opts.push({ id: me.id, label: meLabel, keywords: meLabel.toLowerCase() });
 
-  const selectedStatusLabel = useMemo(() => {
-    const opt = statusOptions.find((o) => String(o.value) === String(statusFilter));
-    return opt?.label || b("Tous", "الكل");
-  }, [statusOptions, statusFilter]);
+  for (const u of scopeUsers) {
+    if (u.id === me.id) continue;
+    opts.push({ id: u.id, label: u.label, keywords: u.label.toLowerCase() });
+  }
+
+  return opts;
+}, [me?.id, meLabel, canPickUser, scopeUsers]);
+
+
+
 
   const loadScopeUsers = useCallback(async () => {
   if (!canPickUser) return;
@@ -603,20 +497,34 @@ const loadList = useCallback(async () => {
         <AppCard>
           <View style={{ gap: SPACING.md }}>
             <View style={styles.row2}>
-              <SelectField
-                label={b("Utilisateur", "مستخدم")}
-                valueLabel={canPickUser ? selectedUserLabel : b("Moi", "أنا")}
-                disabled={!canPickUser}
-                onPress={() => setUserModalOpen(true)}
-              />
+              <View style={{ flex: 1 }}>
+  <AppSelect
+    title="Utilisateur"
+    titleAr="مستخدم"
+    value={canPickUser ? selectedUserId : (me?.id ?? 0)}
+    options={userOptions}
+    disabled={!canPickUser}
+    allowClear={false}
+    onChange={(id) => {
+      if (id === null) return;
+      setSelectedUserId(Number(id));
+    }}
+  />
+</View>
 
-              <View style={{ width: SPACING.sm }} />
+<View style={{ width: SPACING.sm }} />
 
-              <SelectField
-                label={b("Statut", "الحالة")}
-                valueLabel={selectedStatusLabel}
-                onPress={() => setStatusModalOpen(true)}
-              />
+<View style={{ flex: 1 }}>
+  <AppSelect
+    title="Statut"
+    titleAr="الحالة"
+    value={statusFilter}
+    options={statusOptions}
+    allowClear={false}
+    onChange={(id) => setStatusFilter(String(id ?? ""))}
+  />
+</View>
+
             </View>
 
             <View style={styles.row2}>
@@ -633,23 +541,9 @@ const loadList = useCallback(async () => {
         </AppCard>
       </View>
 
-      <SelectModal
-        visible={userModalOpen}
-        title={b("Choisir un utilisateur", "اختيار مستخدم")}
-        options={userOptions}
-        selectedValue={selectedUserId}
-        onClose={() => setUserModalOpen(false)}
-        onSelect={(v) => setSelectedUserId(Number(v))}
-      />
+      
 
-      <SelectModal
-        visible={statusModalOpen}
-        title={b("Choisir un statut", "اختيار حالة")}
-        options={statusOptions}
-        selectedValue={statusFilter}
-        onClose={() => setStatusModalOpen(false)}
-        onSelect={(v) => setStatusFilter(String(v))}
-      />
+  
 
       {loading ? (
         <View style={styles.center}>
@@ -854,30 +748,5 @@ stageTabTextAr: { color: COLORS.textMuted, fontWeight: "800", fontSize: 9, writi
   modalTitle: { color: COLORS.text, fontWeight: "900", fontSize: 14 },
   modalCloseBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
 
-  searchWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 10,
-    height: 48,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.bg,
-    marginBottom: SPACING.sm,
-  },
-  searchInput: { flex: 1, color: COLORS.text, fontWeight: "700" },
 
-  modalOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  modalOptionActive: { backgroundColor: COLORS.brandSoft },
-  modalOptionText: { color: COLORS.text, fontWeight: "800" },
-  modalOptionTextActive: { color: COLORS.text, fontWeight: "900" },
-  modalSep: { height: 1, backgroundColor: COLORS.border, marginVertical: 4 },
 });

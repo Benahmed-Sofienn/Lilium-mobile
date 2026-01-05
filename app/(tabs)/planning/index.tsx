@@ -11,18 +11,65 @@ import {
   ActivityIndicator,
   RefreshControl,
   Platform,
+  Linking,
 } from "react-native";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useRouter } from "expo-router";
 
+
 import { AppHeader } from "../../../src/components/AppHeader";
 import { AppCard } from "../../../src/components/AppCard";
-import { PickerField } from "../../../src/components/PickerField";
+import { AppSelect, type AppSelectOption } from "../../../src/components/AppSelect";
+
 import { COLORS, SPACING, TYPO, RADIUS } from "../../../src/ui/theme";
+import { Ionicons } from "@expo/vector-icons";
+
 
 // IMPORTANT: adapt to your API client.
 // If you already have a centralized axios/fetch client, import it here.
 import { api } from "../../../src/api/client";
+
+// helper 
+
+type PlanValidationField = "valid_commune" | "valid_clients" | "valid_tasks";
+
+function getNextValidationField(plan: PlanCore): PlanValidationField | null {
+  if (!plan.valid_commune) return "valid_commune";
+  if (!plan.valid_clients) return "valid_clients";
+  if (!plan.valid_tasks) return "valid_tasks";
+  return null;
+}
+
+function formatDateFrShort(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  } catch {
+    return d.toLocaleDateString();
+  }
+}
+
+function formatTimeFr(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+  } catch {
+    return d.toLocaleTimeString().slice(0, 5);
+  }
+}
+
+
 
 type ScopeUser = {
   id: number;
@@ -54,9 +101,15 @@ type PlanVisite = {
   telephone?: string | null;
   classification?: string | null;
   regionLabel?: string | null;
-  lastVisit?: string | null; // YYYY-MM-DD
+  lastVisit?: string | null;
   lastBy?: string | null;
+
+  // (optionnel) pour ouverture directe sur un point GPS
+  latitude?: number | null;
+  longitude?: number | null;
+  adresse?: string | null;
 };
+
 
 type PlanTask = {
   id: string | number;
@@ -66,14 +119,31 @@ type PlanTask = {
   added?: string;
 };
 
+type PlanCore = {
+  id: string | number;
+  day: string;
+  user_id: number;
+
+  valid_commune?: boolean | null;
+  valid_clients?: boolean | null;
+  valid_tasks?: boolean | null;
+
+  commune_validation_date?: string | null;
+  client_validation_date?: string | null;
+  tasks_validation_date?: string | null;
+};
+
 type PlanDayPayload = {
-  day: string; // YYYY-MM-DD
+  day: string;
   user: { id: number; username: string; first_name?: string; last_name?: string };
-  plan: { id: string | number; day: string; user_id: number } | null;
+  permissions?: { canValidatePlan?: boolean };
+  plan: PlanCore | null;
   regions: PlanRegion[];
   visites: PlanVisite[];
   tasks: PlanTask[];
 };
+
+
 
 const ALL_USERS = "__ALL__";
 
@@ -143,6 +213,9 @@ async function mapLimit<T, R>(
 
 function PlanCard({ payload }: { payload: PlanDayPayload }) {
   const [expanded, setExpanded] = useState(false);
+  const [plan, setPlan] = useState<PlanCore | null>(payload.plan);
+  const nextField = useMemo(() => (plan ? getNextValidationField(plan) : null), [plan]);
+  const canValidatePlan = Boolean(payload.permissions?.canValidatePlan);
 
   const dayDate = useMemo(() => parseISODate(payload.day), [payload.day]);
   const titleLeft = payload.user?.username || "—";
@@ -151,24 +224,114 @@ function PlanCard({ payload }: { payload: PlanDayPayload }) {
   const visites = payload.visites || [];
   const tasks = payload.tasks || [];
 
+  const onValidateNext = useCallback(async () => {
+  if (!canValidatePlan) return;
+  if (!plan || !nextField) return;
+
+  try {
+    const res = await api.post(`/plans/validate/${plan.id}`, {
+      action: "validate",
+      field: nextField,
+    });
+    const updated = res?.data?.plan;
+    if (updated) setPlan(updated);
+  } catch (e: any) {
+    console.log("Validation error:", e?.response?.data || e?.message);
+  }
+}, [canValidatePlan, plan, nextField]);
+
+
+
+    const openVisiteMap = useCallback(async (v: PlanVisite) => {
+    const anyV: any = v;
+
+    const lat =
+      anyV.latitude ?? anyV.lat ?? anyV.gps_lat ?? anyV.location_lat ?? null;
+    const lng =
+      anyV.longitude ?? anyV.lng ?? anyV.gps_lng ?? anyV.location_lng ?? null;
+
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+
+    let url = "";
+    if (hasCoords) {
+      const label = encodeURIComponent(v.nom || "Client");
+      url =
+        Platform.OS === "ios"
+          ? `maps:0,0?q=${lat},${lng}`
+          : `geo:${lat},${lng}?q=${lat},${lng}(${label})`;
+    } else {
+      // Fallback: recherche par nom + région
+      const query = encodeURIComponent(`${v.nom} ${v.regionLabel ?? ""}`.trim());
+      url = `https://www.google.com/maps/search/?api=1&query=${query}`;
+    }
+
+    try {
+      await Linking.openURL(url);
+    } catch {
+      // Optionnel: tu peux afficher un toast/alert si tu as un composant global
+    }
+  }, []);
+
+
   const visitesPreview = expanded ? visites : visites.slice(0, 4);
   const tasksPreview = expanded ? tasks : tasks.slice(0, 3);
 
   return (
     <AppCard style={{ marginBottom: SPACING.md }}>
       <View style={styles.cardHeaderRow}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+
           <Text style={styles.cardUser}>{titleLeft}</Text>
           <Text style={styles.cardDate}>{formatDateFr(dayDate)}</Text>
         </View>
 
-        <Pressable onPress={() => setExpanded((v) => !v)} hitSlop={10} style={styles.expandBtn}>
-          <Text style={styles.expandText}>{expanded ? "Réduire" : "Détails"}</Text>
-        </Pressable>
+        <View style={styles.validationRow}>
+  <View style={styles.validationItems}>
+    {plan?.valid_commune ? (
+      <View style={styles.validationItem}>
+        <Ionicons name="location-outline" size={18} color={stylesVars.brand} />
+        <Text style={styles.validationDate}>{formatDateFrShort(plan.commune_validation_date)}</Text>
+        <Text style={styles.validationTime}>{formatTimeFr(plan.commune_validation_date)}</Text>
+      </View>
+    ) : null}
+
+    {plan?.valid_clients ? (
+      <View style={styles.validationItem}>
+        <Ionicons name="people-outline" size={18} color={stylesVars.brand} />
+        <Text style={styles.validationDate}>{formatDateFrShort(plan.client_validation_date)}</Text>
+        <Text style={styles.validationTime}>{formatTimeFr(plan.client_validation_date)}</Text>
+      </View>
+    ) : null}
+
+    {plan?.valid_tasks ? (
+      <View style={styles.validationItem}>
+        <Ionicons name="list-outline" size={18} color={stylesVars.brand} />
+        <Text style={styles.validationDate}>{formatDateFrShort(plan.tasks_validation_date)}</Text>
+        <Text style={styles.validationTime}>{formatTimeFr(plan.tasks_validation_date)}</Text>
+      </View>
+    ) : null}
+  </View>
+
+  {canValidatePlan && !plan?.valid_tasks ? (
+    <Pressable
+      onPress={onValidateNext}
+      hitSlop={10}
+      style={({ pressed }) => [
+        styles.validateBtn,
+        pressed && { opacity: 0.85 },
+      ]}
+    >
+      <Text style={styles.validateBtnText}>Valider</Text>
+    </Pressable>
+  ) : null}
+</View>
+
+
+        
       </View>
 
       {/* Regions summary */}
-      <View style={{ marginTop: SPACING.md, gap: 10 }}>
+      {/* <View style={{ marginTop: SPACING.md, gap: 10 }}>
         {regions.map((r) => (
           <View key={String(r.wilayaId)} style={styles.regionBlock}>
             <Text style={styles.regionTitle}>{r.wilayaName}</Text>
@@ -188,7 +351,7 @@ function PlanCard({ payload }: { payload: PlanDayPayload }) {
             </View>
           </View>
         ))}
-      </View>
+      </View> */}
 
       {/* Planned visits */}
       <View style={{ marginTop: SPACING.lg }}>
@@ -197,49 +360,66 @@ function PlanCard({ payload }: { payload: PlanDayPayload }) {
         {visitesPreview.length === 0 ? (
           <Text style={styles.muted}>Aucune visite planifiée.</Text>
         ) : (
-          <View style={{ marginTop: 8, gap: 10 }}>
-            {visitesPreview.map((v) => (
-              <View key={String(v.medecin_id)} style={styles.visiteRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.visiteName}>{v.nom}</Text>
+          <View style={{ marginTop: 8 }}>
+  <View style={styles.visiteListWrap}>
+    {visitesPreview.map((v, idx) => (
+      <React.Fragment key={String(v.medecin_id)}>
+        <View style={styles.visiteRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.visiteName}>{v.nom}</Text>
 
-                  <Text style={styles.visiteMeta}>
-                    Région: <Text style={styles.visiteMetaStrong}>{v.regionLabel || "—"}</Text>
-                  </Text>
+            <Text style={styles.visiteMeta}>
+              Région: <Text style={styles.visiteMetaStrong}>{v.regionLabel || "—"}</Text>
+            </Text>
 
-                  <Text style={styles.visiteMeta}>
-                    Téléphone: <Text style={styles.visiteMetaStrong}>{v.telephone || "—"}</Text>
-                  </Text>
+            <Text style={styles.visiteMeta}>
+              Téléphone: <Text style={styles.visiteMetaStrong}>{v.telephone || "—"}</Text>
+            </Text>
 
-                  <Text style={styles.visiteMeta}>
-                    Classification:{" "}
-                    <Text style={styles.visiteMetaStrong}>{v.classification || "—"}</Text>
-                  </Text>
+            <Text style={styles.visiteMeta}>
+              Classification:{" "}
+              <Text style={styles.visiteMetaStrong}>{v.classification || "—"}</Text>
+            </Text>
 
-                  <Text style={styles.visiteMeta}>
-                    Dernière visite:{" "}
-                    <Text style={styles.visiteMetaStrong}>{v.lastVisit || "—"}</Text>
-                    {v.lastBy ? (
-                      <Text style={styles.visiteMetaStrong}> (Par: {v.lastBy})</Text>
-                    ) : null}
-                  </Text>
-                </View>
-
-                <View style={styles.segmentPillWrap}>
-                  <View
-                    style={[
-                      styles.segmentPill,
-                      v.segment === "commercial" ? styles.segmentCommercial : styles.segmentMedical,
-                    ]}
-                  >
-                    <Text style={styles.segmentPillText}>
-                      {v.segment === "commercial" ? "Commercial" : "Medical"}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ))}
+            <Text style={styles.visiteMeta}>
+              Dernière visite:{" "}
+              <Text style={styles.visiteMetaStrong}>{v.lastVisit || "—"}</Text>
+              {v.lastBy ? (
+                <Text style={styles.visiteMetaStrong}> (Par: {v.lastBy})</Text>
+              ) : null}
+            </Text>
           </View>
+
+          <View style={styles.segmentPillWrap}>
+            <View
+              style={[
+                styles.segmentPill,
+                v.segment === "commercial" ? styles.segmentCommercial : styles.segmentMedical,
+              ]}
+            >
+              <Text style={styles.segmentPillText}>
+                {v.segment === "commercial" ? "Commercial" : "Medical"}
+              </Text>
+            </View>
+
+            {/* Localisation icon (under segment) */}
+            <Pressable
+              onPress={() => openVisiteMap(v)}
+              hitSlop={10}
+              style={({ pressed }) => [styles.mapBtn, pressed && styles.mapBtnPressed]}
+              accessibilityLabel={`Localiser ${v.nom}`}
+            >
+              <Ionicons name="location-outline" size={18} color={stylesVars.brand} />
+            </Pressable>
+          </View>
+        </View>
+
+        {idx < visitesPreview.length - 1 ? <View style={styles.visiteSeparator} /> : null}
+      </React.Fragment>
+    ))}
+  </View>
+</View>
+
         )}
 
         {!expanded && visites.length > visitesPreview.length ? (
@@ -298,15 +478,23 @@ export default function PlanningListScreen() {
 
   const [cards, setCards] = useState<PlanDayPayload[]>([]);
 
-  const userItems = useMemo(() => {
-    const items = scopeUsers.map((u) => ({ label: displayUserLabel(u), value: String(u.id) }));
+  const userOptions = useMemo<AppSelectOption[]>(() => {
+  const items: AppSelectOption[] = scopeUsers.map((u) => {
+    const label = displayUserLabel(u);
+    return {
+      id: String(u.id),
+      label,
+      keywords: `${u.username ?? ""} ${u.first_name ?? ""} ${u.last_name ?? ""}`.trim(),
+    };
+  });
 
-    // Show "Tous" only if there is a real scope list (Countrymanager or Superviseur typically)
-    if (scopeUsers.length > 1) {
-      return [{ label: "Tous", value: ALL_USERS }, ...items];
-    }
-    return items;
-  }, [scopeUsers]);
+  // Show "Tous" only if there is a real scope list
+  if (scopeUsers.length > 1) {
+    return [{ id: ALL_USERS, label: "Tous | الكل", keywords: "tous all" }, ...items];
+  }
+  return items;
+}, [scopeUsers]);
+
 
   const shouldShowUserPicker = scopeUsers.length > 1;
 
@@ -341,16 +529,19 @@ export default function PlanningListScreen() {
   );
 
   const loadScopeUsers = useCallback(async () => {
-    const data = await apiGet<{ users: ScopeUser[] }>("/plans/scope-users");
-    const users = Array.isArray(data?.users) ? data.users : [];
-    setScopeUsers(users);
+  const data = await apiGet<{ users: ScopeUser[]; meId?: number }>("/plans/scope-users");
+  const users = Array.isArray(data?.users) ? data.users : [];
+  setScopeUsers(users);
 
-    // Default selection:
-    // - if only one user => select him
-    // - else keep ALL
-    if (users.length === 1) setSelectedUser(String(users[0].id));
-    else setSelectedUser(ALL_USERS);
-  }, []);
+  if (data?.meId) {
+    setSelectedUser(String(data.meId));
+    return;
+  }
+
+  // fallback if you don’t have meId:
+  if (users.length >= 1) setSelectedUser(String(users[0].id));
+}, []);
+
 
   const fetchPlansForUser = useCallback(
     async (userId: string | null) => {
@@ -406,23 +597,67 @@ export default function PlanningListScreen() {
     return payloads.filter((p) => p?.plan);
   }, []);
 
+  const monthKey = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`; // ex: 2025-12
+};
+
+const getAuthHeader = () => {
+  // Si ton axios client met déjà Authorization dans defaults (interceptors),
+  // on le récupère ici pour le downloadAsync.
+  const h =
+    (api as any)?.defaults?.headers?.common?.Authorization ||
+    (api as any)?.defaults?.headers?.Authorization ||
+    null;
+  return typeof h === "string" && h.length > 0 ? h : null;
+};
+
+const downloadGP = async (kind: "commercial" | "medical") => {
+  try {
+    const month = monthKey(startDate);
+
+    // Build base from env OR from axios baseURL
+    const envBase = `${process.env.EXPO_PUBLIC_API_URL ?? ""}${process.env.EXPO_PUBLIC_API_PREFIX ?? ""}`;
+    const base =
+      (envBase && envBase !== "undefinedundefined" ? envBase : (api as any)?.defaults?.baseURL || "")
+        .toString()
+        .replace(/\/$/, "");
+
+    if (!base) {
+      console.log("Missing API base URL (env or api.defaults.baseURL).");
+      return;
+    }
+
+    // Take token from axios defaults Authorization header
+    const auth = getAuthHeader(); // returns "Bearer xxx" or null
+    const token = auth ? auth.replace(/^Bearer\s+/i, "") : "";
+
+    // Open in browser / PDF viewer (backend must accept token in query; see backend patch below)
+    const url =
+      `${base}/plans/gp-${kind}?month=${encodeURIComponent(month)}` +
+      (token ? `&token=${encodeURIComponent(token)}` : "");
+
+    await Linking.openURL(url);
+  } catch (e) {
+    console.log("GP open error:", e);
+  }
+};
+
+
   const loadAll = useCallback(async () => {
     setError(null);
     setLoading(true);
 
     try {
-      await loadScopeUsers();
+    
 
       // If ALL selected, fetch per-user and merge
       let allPlans: PlanListItem[] = [];
 
-      if (selectedUser === ALL_USERS && scopeUsers.length > 0) {
-        const perUser = await mapLimit(scopeUsers, 4, async (u) => fetchPlansForUser(String(u.id)));
-        allPlans = perUser.flat();
-      } else {
-        const uid = selectedUser === ALL_USERS ? null : selectedUser;
-        allPlans = await fetchPlansForUser(uid);
-      }
+      const uid = selectedUser === ALL_USERS ? null : selectedUser;
+allPlans = await fetchPlansForUser(uid);
+
 
       const payloads = await buildCardsFromList(allPlans);
       setCards(payloads);
@@ -479,13 +714,16 @@ export default function PlanningListScreen() {
           <Text style={styles.filtersTitle}>Filtres</Text>
 
           {shouldShowUserPicker ? (
-            <PickerField
-              label="Utilisateur"
-              value={selectedUser}
-              items={userItems}
-              onChange={(v) => setSelectedUser(v)}
-            />
-          ) : null}
+  <AppSelect
+    title="Utilisateur"
+    titleAr="المستخدم"
+    value={selectedUser}
+    options={userOptions}
+    allowClear={false}
+    onChange={(id) => setSelectedUser(id === null ? ALL_USERS : String(id))}
+  />
+) : null}
+
 
           <View style={styles.dateRow}>
             <View style={{ flex: 1 }}>
@@ -504,6 +742,25 @@ export default function PlanningListScreen() {
               </Pressable>
             </View>
           </View>
+
+          <View style={styles.gpRow}>
+  <Pressable
+    onPress={() => downloadGP("commercial")}
+    style={({ pressed }) => [styles.gpBtn, pressed && styles.gpBtnPressed]}
+  >
+    <Text style={styles.gpBtnText}>GP Commercial</Text>
+  </Pressable>
+
+  <View style={{ width: SPACING.sm }} />
+
+  <Pressable
+    onPress={() => downloadGP("medical")}
+    style={({ pressed }) => [styles.gpBtn, pressed && styles.gpBtnPressed]}
+  >
+    <Text style={styles.gpBtnText}>GP Medical</Text>
+  </Pressable>
+</View>
+
 
           {/* Pickers */}
           {showStartPicker ? (
@@ -555,6 +812,13 @@ export default function PlanningListScreen() {
   );
 }
 
+const stylesVars = {
+  brand: ((COLORS as any).brand ?? "rgba(46, 125, 50, 0.95)") as string,
+  brandSoft: ((COLORS as any).brandSoft ?? "rgba(46, 125, 50, 0.12)") as string,
+  brandLine: "rgba(46, 125, 50, 1)",
+};
+
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -605,6 +869,86 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 
+  validationRow: {
+  flexDirection: "row",
+  alignItems: "flex-start",
+  gap: 10,
+},
+
+validationItems: {
+  flexDirection: "row",
+  alignItems: "flex-start",
+  gap: 10,
+},
+
+validationItem: {
+  alignItems: "center",
+  justifyContent: "center",
+  width: 58,          // tighter than minWidth:64
+},
+
+validationDate: {
+  marginTop: 2,
+  fontSize: 10,
+  fontWeight: "800",
+  color: COLORS.textMuted,
+  textAlign: "center",
+  lineHeight: 11,
+},
+
+
+validationTime: {
+  marginTop: 1,
+  fontSize: 9,
+  fontWeight: "800",
+  color: COLORS.textMuted,
+  textAlign: "center",
+  lineHeight: 10,
+},
+
+
+validateBtn: {
+  height: 38,
+  paddingHorizontal: 14,
+  borderRadius: 999,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: stylesVars.brand,
+  alignSelf: "flex-start",
+},
+validateBtnText: {
+  color: "#fff",
+  fontWeight: "900",
+  fontSize: 12,
+},
+
+
+  gpRow: {
+  flexDirection: "row",
+  marginTop: SPACING.sm,
+},
+
+gpBtn: {
+  flex: 1,
+  backgroundColor: COLORS.brand,
+  paddingVertical: 12,
+  borderRadius: RADIUS.md,
+  alignItems: "center",
+  justifyContent: "center",
+},
+
+gpBtnPressed: {
+  opacity: 0.85,
+  transform: [{ scale: 0.99 }],
+},
+
+gpBtnText: {
+  color: "#fff",
+  fontWeight: "900",
+  fontSize: 13,
+},
+
+
   loadingWrap: {
     marginTop: SPACING.xl,
     alignItems: "center",
@@ -629,10 +973,12 @@ const styles = StyleSheet.create({
   },
 
   cardHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.md,
-  },
+  flexDirection: "row",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: SPACING.md,
+},
+
   cardUser: {
     fontSize: TYPO.title,
     fontWeight: "900",
@@ -694,15 +1040,32 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 
-  visiteRow: {
-    flexDirection: "row",
-    gap: SPACING.md,
+    visiteListWrap: {
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: RADIUS.md,
-    padding: SPACING.md,
-    backgroundColor: COLORS.bg,
+    overflow: "hidden",
+    backgroundColor: COLORS.card,
   },
+
+  visiteRow: {
+    flexDirection: "row",
+    gap: SPACING.md,
+    padding: SPACING.md,
+    backgroundColor: COLORS.card,
+  },
+
+  visiteSeparator: {
+  height: 2,
+  backgroundColor: stylesVars.brandLine,
+  marginHorizontal: SPACING.md,
+  marginTop: 2,
+  marginBottom: 2,
+  borderRadius: 999,
+},
+
+
+
   visiteName: {
     fontSize: TYPO.body,
     fontWeight: "900",
@@ -717,6 +1080,22 @@ const styles = StyleSheet.create({
   visiteMetaStrong: {
     fontWeight: "900",
     color: COLORS.text,
+  },
+
+    mapBtn: {
+    marginTop: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: stylesVars.brandSoft,
+    borderWidth: 1,
+    borderColor: "rgba(46, 125, 50, 0.30)",
+  },
+  mapBtnPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.98 }],
   },
 
   segmentPillWrap: {

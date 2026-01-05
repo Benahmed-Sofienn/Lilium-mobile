@@ -11,7 +11,8 @@ import { api } from "../../../src/api/client";
 
 import { AppHeader } from "../../../src/components/AppHeader";
 import { AppCard } from "../../../src/components/AppCard";
-import { PickerField } from "../../../src/components/PickerField";
+import { AppSelect } from "../../../src/components/AppSelect";
+
 import { COLORS, SPACING, TYPO } from "../../../src/ui/theme";
 
 type UserRole = "Commercial" | "Superviseur" | "Countrymanager";
@@ -137,7 +138,8 @@ export default function CongesIndex() {
     const fn = (me as any)?.first_name;
     const ln = (me as any)?.last_name;
     const full = `${fn || ""} ${ln || ""}`.trim();
-    return full || (me as any)?.username || "Moi";
+    return full || (me as any)?.username || (me?.id ? `User #${me.id}` : "User");
+
   }, [me]);
 
   // Default dropdown = connected user (by name, like others)
@@ -186,6 +188,17 @@ export default function CongesIndex() {
     // Countrymanager gets all users from referentiels; superviseur should already be scoped by backend.
     return [...base, ...others];
   }, [users, me?.id, meLabel]);
+
+  const userSelectOptions = useMemo(
+  () =>
+    userPickerItems.map((it) => ({
+      id: it.value,
+      label: it.label,
+      keywords: it.label, // improves search
+    })),
+  [userPickerItems]
+);
+
 
   const canGoNext = useMemo(() => !isSameMonth(viewMonth, today), [viewMonth, today]);
 
@@ -387,12 +400,19 @@ export default function CongesIndex() {
                   <Text style={styles.sectionTitle}>Filtres</Text>
 
                   {canPickUser ? (
-                    <PickerField
-                      label="Afficher pour"
-                      value={selectedUserKey || (me?.id ? String(me.id) : "")}
-                      items={userPickerItems}
-                      onChange={(v) => setSelectedUserKey(String(v))}
-                    />
+                    <AppSelect
+  title="Afficher pour"
+  titleAr="عرض لـ"
+  value={selectedUserKey || (me?.id ? String(me.id) : null)}
+  options={userSelectOptions}
+  allowClear={false}
+  searchPlaceholder="Rechercher un utilisateur... | بحث عن مستخدم..."
+  onChange={(id) => {
+    if (id == null) return;
+    setSelectedUserKey(String(id));
+  }}
+/>
+
                   ) : (
                     <View style={styles.readonlyRow}>
                       <Text style={styles.readonlyLabel}>Afficher pour</Text>

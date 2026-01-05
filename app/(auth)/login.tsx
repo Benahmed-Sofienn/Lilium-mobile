@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
+import { Ionicons } from "@expo/vector-icons";
 
 import {
   View,
@@ -10,9 +11,7 @@ import {
   Alert,
   Image,
   StyleSheet,
-  KeyboardAvoidingView,
   Platform,
-  TouchableWithoutFeedback,
   Keyboard,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -23,10 +22,10 @@ export default function LoginScreen() {
   const router = useRouter();
   const passwordRef = useRef<TextInput>(null);
 
-
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Brand token (adjust once to perfectly match the logo green)
   const BRAND_GREEN = "#2FA84F";
@@ -60,87 +59,120 @@ export default function LoginScreen() {
     }
   };
 
+  const goForgotPassword = () => {
+    router.push("/(auth)/forgot-password");
+  };
+
   return (
-  <Pressable onPress={Keyboard.dismiss} style={styles.screen}>
-    <KeyboardAwareScrollView
-      enableOnAndroid
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      extraScrollHeight={16}
-      contentContainerStyle={styles.scrollContent}
-    >
-      <View style={styles.header}>
-        <Image
-          source={require("../../assets/images/LiliumLogo.png")}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Sign in to continue</Text>
-      </View>
+    <Pressable onPress={Keyboard.dismiss} style={styles.screen}>
+      <KeyboardAwareScrollView
+        enableOnAndroid
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        extraScrollHeight={16}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.header}>
+          <Image
+            source={require("../../assets/images/LiliumLogo.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <Text style={styles.title}>Welcome back</Text>
+          <Text style={styles.subtitle}>Sign in to continue</Text>
+        </View>
 
-      <View style={styles.card}>
-        <Text style={styles.label}>Username | اسم المستخدم</Text>
-        <TextInput
-          value={username}
-          onChangeText={setUsername}
-          placeholder="Enter your username"
-          placeholderTextColor="#9AA3AF"
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="default"
-          returnKeyType="next"
-          blurOnSubmit={false}
-          onSubmitEditing={() => passwordRef.current?.focus()}
-          style={styles.input}
-        />
+        <View style={styles.card}>
+          <Text style={styles.label}>Username | اسم المستخدم</Text>
+          <TextInput
+            value={username}
+            onChangeText={setUsername}
+            placeholder="Enter your username"
+            placeholderTextColor="#9AA3AF"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="default"
+            returnKeyType="next"
+            blurOnSubmit={false}
+            onSubmitEditing={() => passwordRef.current?.focus()}
+            style={styles.input}
+          />
 
-        <Text style={[styles.label, { marginTop: 12 }]}>Password | كلمة السر</Text>
-        <TextInput
-          ref={passwordRef}
-          value={password}
-          onChangeText={setPassword}
-          placeholder="Enter your password"
-          placeholderTextColor="#9AA3AF"
-          secureTextEntry
-          autoCapitalize="none"
-          returnKeyType="done"
-          onSubmitEditing={submit}
-          style={styles.input}
-        />
+          <Text style={[styles.label, { marginTop: 12 }]}>
+            Password | كلمة السر
+          </Text>
 
-        <Pressable
-          onPress={submit}
-          disabled={!canSubmit}
-          style={({ pressed }) => [
-            styles.button,
-            { backgroundColor: BRAND_GREEN },
-            !canSubmit && styles.buttonDisabled,
-            pressed && canSubmit && styles.buttonPressed,
-          ]}
-        >
-          {busy ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonText}>Sign in</Text>
-          )}
-        </Pressable>
-      </View>
-    </KeyboardAwareScrollView>
-  </Pressable>
-);
+          {/* Password input with eye icon */}
+          <View style={styles.passwordWrap}>
+            <TextInput
+              ref={passwordRef}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Enter your password"
+              placeholderTextColor="#9AA3AF"
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              returnKeyType="done"
+              onSubmitEditing={submit}
+              style={[styles.input, { paddingRight: 44 }]}
+            />
 
+            <Pressable
+              onPress={() => setShowPassword((v) => !v)}
+              style={styles.eyeBtn}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+            >
+              <Ionicons
+                name={showPassword ? "eye-off-outline" : "eye-outline"}
+                size={20}
+                color="#64748B"
+              />
+            </Pressable>
+          </View>
+
+          {/* Forgot password link */}
+          <Pressable
+            onPress={goForgotPassword}
+            style={({ pressed }) => [
+              styles.forgotBtn,
+              pressed && { opacity: 0.75 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Forgot password"
+          >
+            <Text style={[styles.forgotText, { color: BRAND_GREEN }]}>
+              Forgot password? | نسيت كلمة السر؟
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={submit}
+            disabled={!canSubmit}
+            style={({ pressed }) => [
+              styles.button,
+              { backgroundColor: BRAND_GREEN },
+              !canSubmit && styles.buttonDisabled,
+              pressed && canSubmit && styles.buttonPressed,
+            ]}
+          >
+            {busy ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.buttonText}>Sign in</Text>
+            )}
+          </Pressable>
+        </View>
+      </KeyboardAwareScrollView>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: "#F5F7FA",
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    justifyContent: "center",
   },
   header: {
     alignItems: "center",
@@ -196,11 +228,31 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: "#0F172A",
   },
+  passwordWrap: {
+    position: "relative",
+    justifyContent: "center",
+  },
+  eyeBtn: {
+    position: "absolute",
+    right: 12,
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  forgotBtn: {
+    alignSelf: "flex-end",
+    marginTop: 10,
+    paddingVertical: 4,
+  },
+  forgotText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
   scrollContent: {
-  flexGrow: 1,
-  paddingHorizontal: 20,
-  justifyContent: "center",
-},
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    justifyContent: "center",
+  },
   button: {
     marginTop: 16,
     borderRadius: 12,
@@ -217,12 +269,5 @@ const styles = StyleSheet.create({
   },
   buttonPressed: {
     opacity: 0.9,
-  },
-
-  debug: {
-    marginTop: 12,
-    fontSize: 12,
-    color: "#94A3B8",
-    textAlign: "center",
   },
 });

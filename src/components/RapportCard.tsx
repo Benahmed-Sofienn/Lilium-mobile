@@ -220,11 +220,22 @@ export function RapportCard({
             <Text style={styles.label}>Note:</Text>
             <View style={{ width: 6 }} />
 
-            <Stars
-              value={Number(item.note ?? 0)}
-              disabled={!canEditNote}
-              onPick={(n) => onSetNote(item.id, n)}
-            />
+            <Text style={styles.noteValue}>
+  {item.note == null ? "—" : String(item.note)}
+</Text>
+
+<Stars
+  value={Number(item.note ?? 0)}
+  disabled={!canEditNote}
+  onPick={(n) => {
+    // Extra safety: Commercial cannot change note even if something triggers onPick
+    if (!canEditNote) return;
+    onSetNote(item.id, n);
+  }}
+/>
+{!canEditNote ? <Text style={styles.noteHint}>Lecture seule</Text> : null}
+
+
           </View>
 
           {item.lastComment ? (
@@ -323,6 +334,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     color: COLORS.text,
   },
+  noteValue: {
+  color: COLORS.text,
+  fontWeight: "900",
+  marginRight: 8,
+},
+noteHint: { color: COLORS.textMuted, fontSize: TYPO.small, marginLeft: 8 },
+
   sendBtn: {
     width: FIELD.height,
     height: FIELD.height,
