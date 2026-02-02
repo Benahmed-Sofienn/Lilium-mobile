@@ -8,6 +8,7 @@ import { getToken } from "../auth/tokenStorage";
  * => API_BASE_URL = http://10.x.x.x:5000/api
  */
 const API_URL = (process.env.EXPO_PUBLIC_API_URL || "").replace(/\/+$/, "");
+const DJANGO_URL = (process.env.EXPO_PUBLIC_DJANGO_URL || "").replace(/\/+$/, "");
 const API_PREFIX = process.env.EXPO_PUBLIC_API_PREFIX || "/api"; // IMPORTANT: default to /api (not /api/auth)
 const API_PATH_PREFIX = API_PREFIX.startsWith("/") ? API_PREFIX : `/${API_PREFIX}`;
 
@@ -23,18 +24,27 @@ let accessToken: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 
 export const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_BASE_URL, // Node base (e.g. http://10.177.234.9:5000/api)
+  timeout: 20000,
+});
+
+// Django client (auth + scope endpoints) — NO /api prefix
+export const djangoApi = axios.create({
+  baseURL: DJANGO_URL, // e.g. http://10.177.234.9:8000
   timeout: 20000,
 });
 
 export const setAccessToken = (token: string | null) => {
   accessToken = token;
 
-  // Keep axios defaults in sync (helps for some edge cases)
+  // Keep axios defaults in sync (helps for cold start / edge cases)
   if (token) {
-    api.defaults.headers.common.Authorization = `Bearer ${token}`;
+    // We standardize on Django TokenAuth header style for BOTH servers
+    api.defaults.headers.common.Authorization = `Token ${token}`;
+    djangoApi.defaults.headers.common.Authorization = `Token ${token}`;
   } else {
     delete (api.defaults.headers.common as any).Authorization;
+    delete (djangoApi.defaults.headers.common as any).Authorization;
   }
 };
 
@@ -50,7 +60,8 @@ async function resolveToken(): Promise<string | null> {
     const stored = await getToken();
     if (stored) {
       accessToken = stored;
-      api.defaults.headers.common.Authorization = `Bearer ${stored}`;
+      api.defaults.headers.common.Authorization = `Token ${stored}`;
+      djangoApi.defaults.headers.common.Authorization = `Token ${stored}`;
       return stored;
     }
   } catch {
@@ -71,8 +82,7 @@ function buildFullUrl(path: string) {
 
   const p = path.startsWith("/") ? path : `/${path}`;
 
-  if (!API_URL) return p;
-
+  // Already contains /api prefix => attach to raw API_URL
   if (p === API_PATH_PREFIX || p.startsWith(`${API_PATH_PREFIX}/`)) {
     return `${API_URL}${p}`;
   }
@@ -80,7 +90,7 @@ function buildFullUrl(path: string) {
 }
 
 /**
- * Auth-aware fetch: injects Bearer token if available,
+ * Auth-aware fetch: injects TokenAuth header if available,
  * and triggers onUnauthorized on 401 (like axios interceptor).
  */
 export async function authFetch(path: string, init: RequestInit = {}) {
@@ -91,7 +101,7 @@ export async function authFetch(path: string, init: RequestInit = {}) {
 
   if (!headers.has("Authorization")) {
     const token = await resolveToken();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (token) headers.set("Authorization", `Token ${token}`);
   }
 
   const res = await fetch(url, { ...init, headers });
@@ -106,15 +116,39 @@ export async function authFetch(path: string, init: RequestInit = {}) {
 
 // Axios request interceptor (kept for safety)
 api.interceptors.request.use(async (config) => {
-  const token = await resolveToken(); // <-- important
+  const token = await resolveToken();
   if (token) {
     config.headers = config.headers ?? {};
-    (config.headers as any).Authorization = `Bearer ${token}`;
+    (config.headers as any).Authorization = `Token ${token}`;
+  }
+  return config;
+});
+
+// Also attach token for djangoApi in case you call it directly anywhere else
+djangoApi.interceptors.request.use(async (config) => {
+  const token = await resolveToken();
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as any).Authorization = `Token ${token}`;
   }
   return config;
 });
 
 api.interceptors.response.use(
+  (res) => res,
+  (err: AxiosError) => {
+    const status = err.response?.status;
+    const url = String(err.config?.url || "").toLowerCase();
+    const isLogin = url.includes("/login");
+
+    if (status === 401 && !isLogin) {
+      onUnauthorized?.();
+    }
+    return Promise.reject(err);
+  }
+);
+
+djangoApi.interceptors.response.use(
   (res) => res,
   (err: AxiosError) => {
     const status = err.response?.status;

@@ -4,6 +4,8 @@ import { View, Text, StyleSheet, Image, Pressable, TextInput, ActivityIndicator 
 import { Ionicons } from "@expo/vector-icons";
 import { AppCard } from "./AppCard";
 import { COLORS, SPACING, TYPO, FIELD, RADIUS } from "../ui/theme";
+import { mediaUrl } from "../utils/media";
+
 
 type RapportUser = {
   id: number;
@@ -17,8 +19,8 @@ type RapportItem = {
   id: number;
   added: string; // ISO
   note?: number | null;
-
   user: RapportUser;
+  visitedSectorTypes?: string[];
 
   // backend may return either images.image or images.image1; we support both
   images?: {
@@ -66,19 +68,6 @@ function formatHeaderDate(iso: string) {
   return `${cap}, ${ymd(dt)}`;
 }
 
-function resolveMediaUrl(pathOrUrl?: string | null) {
-  if (!pathOrUrl) return null;
-  const s = String(pathOrUrl);
-
-  // already absolute
-  if (/^https?:\/\//i.test(s)) return s;
-
-  // ensure leading slash
-  const rel = s.startsWith("/") ? s : `/${s}`;
-
-  const base = (process.env.EXPO_PUBLIC_API_URL || "").replace(/\/$/, "");
-  return base ? `${base}${rel}` : rel;
-}
 
 function Stars({
   value,
@@ -109,28 +98,103 @@ function Stars({
   );
 }
 
+function ImageWithRetry({
+  uri,
+  style,
+}: {
+  uri: string;
+  style: any;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+   
+
+
+  const finalUri = useMemo(() => {
+    if (!uri) return "";
+    // cache-bust on retry
+    const sep = uri.includes("?") ? "&" : "?";
+    return attempt > 0 ? `${uri}${sep}retry=${attempt}` : uri;
+  }, [uri, attempt]);
+
+  if (!uri) return null;
+
+  return (
+    <View style={{ position: "relative" }}>
+      <Image
+        source={{ uri: finalUri }}
+        style={style}
+        resizeMode="cover"
+        onLoadStart={() => {
+          setLoading(true);
+          setFailed(false);
+        }}
+        onLoadEnd={() => setLoading(false)}
+        onError={() => {
+          setLoading(false);
+          setFailed(true);
+        }}
+      />
+
+      {loading ? (
+        <View style={styles.imgOverlay}>
+          <ActivityIndicator />
+        </View>
+      ) : null}
+
+      {failed ? (
+        <Pressable
+          onPress={() => setAttempt((n) => n + 1)}
+          style={styles.imgOverlay}
+        >
+          <Ionicons name="refresh" size={22} color={COLORS.text} />
+          <Text style={styles.retryText}>Réessayer</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+
 export function RapportCard({
   item,
   canEditNote,
   canComment,
   onSubmitComment,
   onSetNote,
+  onOpenDetails,
 }: {
   item: RapportItem;
-  canEditNote: boolean; // Commercial = false (show only)
-  canComment: boolean;  // all roles true (backend enforces scope)
+  canEditNote: boolean;
+  canComment: boolean;
   onSubmitComment: (rapportId: number, text: string) => Promise<void>;
   onSetNote: (rapportId: number, note: number) => Promise<void>;
+  onOpenDetails?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
 
+   const headerSectorType = useMemo(() => {
+    const raw = Array.isArray((item as any).visitedSectorTypes) ? (item as any).visitedSectorTypes : [];
+    const types = raw.map((x: any) => String(x || "").toUpperCase()).filter(Boolean);
+
+    if (types.includes("DEP")) return "DEP";
+    if (types.includes("SEMI")) return "SEMI";
+    return null; // null/IN/empty => keep green
+  }, [(item as any).visitedSectorTypes]);
+
+  const isDep = headerSectorType === "DEP";
+  const isSemi = headerSectorType === "SEMI";
+
   const img1 = useMemo(() => {
     const raw = item.images?.image ?? item.images?.image1 ?? null;
-    return resolveMediaUrl(raw);
+    return mediaUrl(raw);
+
   }, [item.images?.image, item.images?.image1]);
 
-  const img2 = useMemo(() => resolveMediaUrl(item.images?.image2 ?? null), [item.images?.image2]);
+  const img2 = useMemo(() => mediaUrl(item.images?.image2 ?? null),[item.images?.image2]);
 
   const regionsText = useMemo(() => {
     const arr = item.regionsVisited || [];
@@ -162,9 +226,17 @@ export function RapportCard({
   };
 
   return (
-    <AppCard style={styles.card}>
+
+    <Pressable
+      onPress={onOpenDetails}
+      disabled={!onOpenDetails}
+      accessibilityRole="button"
+      android_ripple={{ color: "rgba(0,0,0,0.06)" }}
+    >
+    <AppCard style={[styles.card, isSemi ? styles.cardSemi : null, isDep ? styles.cardDep : null]}>
       {/* Green header inside card */}
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, isSemi ? styles.topBarSemi : null, isDep ? styles.topBarDep : null]}>
+
         <Text numberOfLines={1} style={styles.topBarText}>
           ID: {item.id} | Nom: {prettyPerson(item.user)}
         </Text>
@@ -178,12 +250,13 @@ export function RapportCard({
         <View style={styles.imagesCol}>
           <View style={styles.thumbWrap}>
             {img1 ? (
-              <Image source={{ uri: img1 }} style={styles.thumb} resizeMode="cover" />
-            ) : (
-              <View style={styles.missing}>
-                <Ionicons name="close" size={44} color="#D92D20" />
-              </View>
-            )}
+  <ImageWithRetry uri={img1} style={styles.thumb} />
+) : (
+  <View style={styles.missing}>
+    <Ionicons name="close" size={44} color="#D92D20" />
+  </View>
+)}
+
           </View>
           <Text style={styles.imgLabel}>image</Text>
 
@@ -275,11 +348,29 @@ export function RapportCard({
         </View>
       </View>
     </AppCard>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   card: { padding: 0, overflow: "hidden" },
+
+  cardSemi: {
+    borderWidth: 3,
+    borderColor: "#C0C0C0", // silver
+  },
+  cardDep: {
+    borderWidth: 3,
+    borderColor: "#D4AF37", // gold
+  },
+
+  topBarSemi: {
+    backgroundColor: "#C0C0C0",
+  },
+  topBarDep: {
+    backgroundColor: "#D4AF37",
+  },
+
 
   topBar: {
     backgroundColor: COLORS.brand,
@@ -350,4 +441,20 @@ noteHint: { color: COLORS.textMuted, fontSize: TYPO.small, marginLeft: 8 },
     justifyContent: "center",
   },
   sendBtnDisabled: { opacity: 0.6 },
+  imgOverlay: {
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: "rgba(255,255,255,0.55)",
+},
+retryText: {
+  marginTop: 6,
+  fontWeight: "800",
+  color: COLORS.text,
+},
+
 });

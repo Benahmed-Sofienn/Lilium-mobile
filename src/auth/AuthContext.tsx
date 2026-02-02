@@ -1,10 +1,29 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { api, setAccessToken, setOnUnauthorized } from "../api/client";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { djangoApi, setAccessToken, setOnUnauthorized } from "../api/client";
+
 import { deleteToken, getToken, saveToken } from "./tokenStorage";
 
-type UserRole = "Commercial" | "Superviseur" | "Countrymanager";
+type UserRole = "Commercial" | "Superviseur" | "CountryManager";
 
-type AuthUser = {
+export type UnderUser = {
+  id: number;
+  username?: string;
+
+  // From accounts_userprofile.speciality_rolee
+  speciality_rolee?: string;
+
+  // From accounts_userprofile.rolee (optional, in case you want it later)
+  role?: UserRole;
+};
+
+export type AuthUser = {
   id: number;
   username: string;
   first_name?: string;
@@ -13,9 +32,16 @@ type AuthUser = {
   is_superuser?: boolean;
   is_staff?: boolean;
   is_active?: boolean;
-  role?: UserRole; 
-};
 
+  // existing (from rolee)
+  role?: UserRole;
+
+  // NEW (from speciality_rolee)
+  speciality_rolee?: string;
+
+  // NEW
+  users_under?: UnderUser[];
+};
 
 type AuthState =
   | { status: "loading"; user: null; scopeUserIds: number[] }
@@ -30,7 +56,110 @@ type Ctx = {
 
 const AuthContext = createContext<Ctx | null>(null);
 
+function normalizeRole(rolee: unknown): UserRole | undefined {
+  if (typeof rolee !== "string") return undefined;
 
+  const r = rolee.trim();
+
+  if (r === "Commercial") return "Commercial";
+  if (r === "Superviseur") return "Superviseur";
+  if (r === "CountryManager" || r.toLowerCase() === "countrymanager") {
+    return "CountryManager";
+  }
+  return undefined;
+}
+
+function normalizeSpecialityRolee(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  const raw = value.trim();
+  if (!raw) return undefined;
+
+  // Accept either underscores or spaces from backend
+  const s = raw.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+
+  // Canonicalize known values (keep strings to avoid TypeScript friction elsewhere)
+  if (s.toLowerCase() === "medico commercial") return "Medico Commercial";
+  if (s.toLowerCase() === "commercial") return "Commercial";
+
+  // Supervisor “speciality” axis as seen in your backend usage
+  if (s.toLowerCase() === "superviseur national") return "Superviseur National";
+  if (s.toLowerCase() === "superviseur regional") return "Superviseur Regional";
+  if (s.toLowerCase() === "superviseur") return "Superviseur";
+
+  // Unknown values: keep as-is (but normalized for underscores/spaces)
+  return s;
+}
+
+/**
+ * Django /accounts/api/app/current returns a flat payload like:
+ * {
+ *   id, username, first_name, last_name, email,
+ *   is_superuser, is_staff, is_active,
+ *   rolee,
+ *   speciality_rolee,
+ *   users_under: [{id, username, rolee?, speciality_rolee?}, ...]
+ * }
+ */
+function mapCurrentResponseToAuth(data: any): { user: AuthUser; scopeUserIds: number[] } {
+  if (!data || typeof data !== "object") {
+    throw new Error("Invalid /accounts/api/app/current response");
+  }
+
+  const id = Number(data.id);
+  if (!Number.isFinite(id)) {
+    throw new Error("Invalid user id from /accounts/api/app/current");
+  }
+
+  const user: AuthUser = {
+    id,
+    username: String(data.username ?? ""),
+    first_name: data.first_name ?? undefined,
+    last_name: data.last_name ?? undefined,
+    email: data.email ?? undefined,
+    is_superuser: data.is_superuser ?? undefined,
+    is_staff: data.is_staff ?? undefined,
+    is_active: data.is_active ?? undefined,
+    role: normalizeRole(data.rolee ?? data.role),
+
+    speciality_rolee: normalizeSpecialityRolee(
+      data.speciality_rolee ?? data.specialityRolee
+    ),
+  };
+
+  const usersUnder: UnderUser[] = Array.isArray(data.users_under)
+    ? data.users_under
+        .map((u: any) => {
+          const uid = Number(u?.id);
+          if (!Number.isFinite(uid)) return null;
+
+          return {
+            id: uid,
+            username: u?.username != null ? String(u.username) : undefined,
+            role: normalizeRole(u?.rolee ?? u?.role),
+            speciality_rolee: normalizeSpecialityRolee(
+              u?.speciality_rolee ?? u?.specialityRolee
+            ),
+          } as UnderUser;
+        })
+        .filter(Boolean) as UnderUser[]
+    : [];
+
+  user.users_under = usersUnder;
+
+  const usersUnderIds = usersUnder.map((u) => u.id);
+
+  // Always include self and de-duplicate
+  const scopeUserIds = Array.from(new Set([user.id, ...usersUnderIds]));
+
+  return { user, scopeUserIds };
+}
+
+async function fetchCurrent(): Promise<{ user: AuthUser; scopeUserIds: number[] }> {
+  // NOTE: This must hit Django, not Node
+  const res = await djangoApi.get("/accounts/api/app/current");
+  return mapCurrentResponseToAuth(res.data);
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
@@ -38,6 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user: null,
     scopeUserIds: [],
   });
+
   const logoutLock = useRef(false);
 
   const logout = async () => {
@@ -52,69 +182,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
- const loadMeAndScope = async () => {
-  const meRes = await api.get("/auth/me");
-
-  const user = meRes.data?.user as AuthUser | undefined;
-  const roleFromProfile = meRes.data?.profile?.rolee as AuthUser["role"] | undefined;
-
-  if (!user?.id) throw new Error("Invalid /me response");
-
-  const mergedUser: AuthUser = {
-    ...user,
-    role: (user as any)?.role ?? roleFromProfile, // fallback from profile.rolee
-  };
-
-  const scopeRes = await api.get("/auth/scope-users");
-  const idsRaw = scopeRes.data?.scopeUserIds;
-  const scopeUserIds = Array.isArray(idsRaw)
-    ? idsRaw.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
-    : [];
-
-  setState({ status: "signedIn", user: mergedUser, scopeUserIds });
-}
-
-const fetchMeAndScope = async () => {
-  const meRes = await api.get("/auth/me");
-
-  const user = meRes.data?.user as AuthUser | undefined;
-  const roleFromProfile = meRes.data?.profile?.rolee as AuthUser["role"] | undefined;
-
-  if (!user?.id) throw new Error("Invalid /me response");
-
-  const mergedUser: AuthUser = {
-    ...user,
-    role: (user as any)?.role ?? roleFromProfile,
-  };
-
-  const scopeRes = await api.get("/auth/scope-users");
-  const idsRaw = scopeRes.data?.scopeUserIds;
-  const scopeUserIds = Array.isArray(idsRaw)
-    ? idsRaw.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
-    : [];
-
-  return { user: mergedUser, scopeUserIds };
-};
-
-
   const login = async (username: string, password: string) => {
-    setState((prev) => ({ status: "loading", user: null, scopeUserIds: prev.scopeUserIds }));
+    setState((prev) => ({
+      status: "loading",
+      user: null,
+      scopeUserIds: prev.scopeUserIds,
+    }));
 
+    // DRF obtain_auth_token: POST /api-auth/ -> { token: "..." }
+    // This endpoint does NOT require CSRF and is intended for API clients.
+    const res = await djangoApi.post("/api-auth/", { username, password });
 
-    const res = await api.post("/auth/login", { username, password, rememberMe: true });
     const token = res.data?.token;
-    if (!token) throw new Error("Missing token from /login");
+    if (!token || typeof token !== "string") {
+      throw new Error("Missing token from /api-auth/");
+    }
 
     await saveToken(token);
     setAccessToken(token);
 
-    const { user, scopeUserIds } = await fetchMeAndScope();
-
+    const { user, scopeUserIds } = await fetchCurrent();
     setState({ status: "signedIn", user, scopeUserIds });
   };
 
-
   useEffect(() => {
+    // any 401 should log the user out (except login, handled in client.ts)
     setOnUnauthorized(() => logout());
     return () => setOnUnauthorized(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,32 +217,22 @@ const fetchMeAndScope = async () => {
       try {
         const token = await getToken();
         if (!token) {
-          setState((prev) =>
-            prev.status === "loading"
-              ? { status: "signedOut", user: null, scopeUserIds: [] }
-              : prev
-          );
+          setState({ status: "signedOut", user: null, scopeUserIds: [] });
           return;
         }
 
         setAccessToken(token);
-        const { user, scopeUserIds } = await fetchMeAndScope();
 
-        setState((prev) =>
-          prev.status === "loading"
-            ? { status: "signedIn", user, scopeUserIds }
-            : prev
-        );
+        const { user, scopeUserIds } = await fetchCurrent();
+        setState({ status: "signedIn", user, scopeUserIds });
       } catch {
-        setState((prev) =>
-          prev.status === "loading"
-            ? { status: "signedOut", user: null, scopeUserIds: [] }
-            : prev
-        );
+        // token invalid / server unreachable / payload mismatch
+        setAccessToken(null);
+        await deleteToken().catch(() => {});
+        setState({ status: "signedOut", user: null, scopeUserIds: [] });
       }
     })();
   }, []);
-
 
   const value = useMemo<Ctx>(() => ({ state, login, logout }), [state]);
 

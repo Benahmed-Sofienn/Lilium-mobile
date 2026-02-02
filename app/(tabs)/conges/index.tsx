@@ -3,7 +3,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { useSafeAreaInsets, SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
 import { Calendar, DateData } from "react-native-calendars";
 
 import { useAuth } from "../../../src/auth/AuthContext";
@@ -70,9 +69,6 @@ function isoToYMD(iso: string) {
   const d = new Date(iso);
   return toYMD(d);
 }
-function isSameMonth(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
-}
 
 function isAbsenceType(type?: string) {
   const t = norm(type);
@@ -131,7 +127,6 @@ export default function CongesIndex() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const canSeeAll = !!me && isCountryManager(role);
   const canPickUser = !!me && (isSupervisor(role) || isCountryManager(role));
 
   const meLabel = useMemo(() => {
@@ -139,7 +134,6 @@ export default function CongesIndex() {
     const ln = (me as any)?.last_name;
     const full = `${fn || ""} ${ln || ""}`.trim();
     return full || (me as any)?.username || (me?.id ? `User #${me.id}` : "User");
-
   }, [me]);
 
   // Default dropdown = connected user (by name, like others)
@@ -190,23 +184,14 @@ export default function CongesIndex() {
   }, [users, me?.id, meLabel]);
 
   const userSelectOptions = useMemo(
-  () =>
-    userPickerItems.map((it) => ({
-      id: it.value,
-      label: it.label,
-      keywords: it.label, // improves search
-    })),
-  [userPickerItems]
-);
-
-
-  const canGoNext = useMemo(() => !isSameMonth(viewMonth, today), [viewMonth, today]);
-
-  const onPrevMonth = () => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
-  const onNextMonth = () => {
-    if (!canGoNext) return;
-    setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
-  };
+    () =>
+      userPickerItems.map((it) => ({
+        id: it.value,
+        label: it.label,
+        keywords: it.label, // improves search
+      })),
+    [userPickerItems]
+  );
 
   const loadSeq = useRef(0);
 
@@ -253,11 +238,6 @@ export default function CongesIndex() {
     load();
   }, [load]);
 
-  const monthLabel = useMemo(() => {
-    const m = viewMonth.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
-    return m.charAt(0).toUpperCase() + m.slice(1);
-  }, [viewMonth]);
-
   const onDayPress = (day: DateData) => setSelectedDay(day.dateString);
 
   // Details list: items overlapping selectedDay
@@ -279,9 +259,9 @@ export default function CongesIndex() {
     const monthEnd = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0);
 
     const HEX = {
-      green: COLORS.brand,     // congé accepté
-      yellow: "#F59E0B",       // congé en attente
-      red: "#DC2626",          // absence (et refus)
+      green: COLORS.brand, // congé accepté
+      yellow: "#F59E0B", // congé en attente
+      red: "#DC2626", // absence (et refus)
     } as const;
 
     const priority = (k: "green" | "yellow" | "red") => (k === "red" ? 3 : k === "yellow" ? 2 : 1);
@@ -378,11 +358,7 @@ export default function CongesIndex() {
       <Stack.Screen options={{ title: "Congés / Absences", headerShown: false }} />
 
       <View style={styles.root}>
-        <AppHeader
-          title="Congés / Absences"
-          titleAr="الإجازات / الغيابات"
-          onBack={() => router.back()}
-        />
+        <AppHeader title="Congés / Absences" titleAr="الإجازات / الغيابات" onBack={() => router.back()} />
 
         {/* bottom safe area + scroll */}
         <SafeAreaView edges={["bottom"]} style={styles.safeBody}>
@@ -401,44 +377,23 @@ export default function CongesIndex() {
 
                   {canPickUser ? (
                     <AppSelect
-  title="Afficher pour"
-  titleAr="عرض لـ"
-  value={selectedUserKey || (me?.id ? String(me.id) : null)}
-  options={userSelectOptions}
-  allowClear={false}
-  searchPlaceholder="Rechercher un utilisateur... | بحث عن مستخدم..."
-  onChange={(id) => {
-    if (id == null) return;
-    setSelectedUserKey(String(id));
-  }}
-/>
-
+                      title="Afficher pour"
+                      titleAr="عرض لـ"
+                      value={selectedUserKey || (me?.id ? String(me.id) : null)}
+                      options={userSelectOptions}
+                      allowClear={false}
+                      searchPlaceholder="Rechercher un utilisateur... | بحث عن مستخدم..."
+                      onChange={(id) => {
+                        if (id == null) return;
+                        setSelectedUserKey(String(id));
+                      }}
+                    />
                   ) : (
                     <View style={styles.readonlyRow}>
                       <Text style={styles.readonlyLabel}>Afficher pour</Text>
                       <Text style={styles.readonlyValue}>{meLabel}</Text>
                     </View>
                   )}
-                </AppCard>
-
-                {/* Month nav */}
-                <AppCard style={styles.monthCard}>
-                  <Pressable onPress={onPrevMonth} style={styles.monthBtn}>
-                    <Ionicons name="chevron-back" size={18} color={COLORS.text} />
-                  </Pressable>
-
-                  <View style={{ flex: 1, alignItems: "center" }}>
-                    <Text style={styles.monthLabel}>{monthLabel}</Text>
-                    <Text style={styles.monthSub}>{selectedUserLabel}</Text>
-                  </View>
-
-                  <Pressable
-                    onPress={onNextMonth}
-                    style={[styles.monthBtn, !canGoNext && { opacity: 0.35 }]}
-                    disabled={!canGoNext}
-                  >
-                    <Ionicons name="chevron-forward" size={18} color={COLORS.text} />
-                  </Pressable>
                 </AppCard>
 
                 {/* Calendar */}
@@ -502,17 +457,16 @@ export default function CongesIndex() {
               const isAbs = isAbsenceType(item.type);
               const key = isAbs ? "red" : statusKey(item.status);
 
-              const color =
-                key === "green" ? COLORS.brand : key === "yellow" ? "#F59E0B" : "#DC2626";
+              const color = key === "green" ? COLORS.brand : key === "yellow" ? "#F59E0B" : "#DC2626";
 
               const uid = getItemUserId(item);
               const userName =
-                (item.first_name || item.last_name)
+                item.first_name || item.last_name
                   ? `${item.first_name || ""} ${item.last_name || ""}`.trim()
-                  : (item.user?.first_name || item.user?.last_name)
+                  : item.user?.first_name || item.user?.last_name
                     ? `${item.user?.first_name || ""} ${item.user?.last_name || ""}`.trim()
                     : uid
-                      ? (nameById.get(uid) || `User #${uid}`)
+                      ? nameById.get(uid) || `User #${uid}`
                       : "User #?";
 
               const start = isoToYMD(item.date);
@@ -525,9 +479,7 @@ export default function CongesIndex() {
 
                     <View style={{ flex: 1, gap: 8 }}>
                       <View style={styles.itemTop}>
-                        <Text style={styles.itemTitle}>
-                          {item.type || (isAbs ? "Absence" : "Congé")}
-                        </Text>
+                        <Text style={styles.itemTitle}>{item.type || (isAbs ? "Absence" : "Congé")}</Text>
 
                         <View style={[styles.statusPill, { borderColor: color }]}>
                           <Text style={[styles.statusPillText, { color }]}>
@@ -586,33 +538,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: COLORS.text,
     marginBottom: SPACING.sm,
-  },
-
-  monthCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.md,
-  },
-  monthBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  monthLabel: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  monthSub: {
-    marginTop: 2,
-    fontSize: TYPO.small,
-    fontWeight: "800",
-    color: COLORS.textMuted,
   },
 
   legendRow: {

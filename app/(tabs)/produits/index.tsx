@@ -63,16 +63,24 @@ type ProduitDetails = {
 function buildMediaUri(maybePath?: string | null) {
   if (!maybePath) return null;
 
-  // Full URL already
+  // Full URL already (backend might send absolute URL)
   if (/^https?:\/\//i.test(maybePath)) return maybePath;
 
-  const API_URL = (process.env.EXPO_PUBLIC_API_URL || "").replace(/\/+$/, "");
-  if (!API_URL) return null;
+  // Use the same base URL as the API client (same logic as rapports usually ends up doing)
+  const rawBase =
+    (api?.defaults?.baseURL || process.env.EXPO_PUBLIC_API_URL || "").replace(/\/+$/, "");
+  if (!rawBase) return null;
 
-  // Generic join: if backend returns "uploads/xxx.jpg" it works.
-  const p = maybePath.startsWith("/") ? maybePath : `/${maybePath}`;
-  return `${API_URL}${p}`;
+  // Media is typically served outside /api
+  const base = rawBase.replace(/\/api$/i, "");
+
+  // Normalize Windows paths just in case
+  const normalized = String(maybePath).replace(/\\/g, "/");
+  const p = normalized.startsWith("/") ? normalized : `/${normalized}`;
+
+  return `${base}${p}`;
 }
+
 
 function InfoRow({ label, value }: { label: string; value?: string | number | null }) {
   if (value === null || value === undefined || String(value).trim() === "") return null;

@@ -1,9 +1,17 @@
-import React, { useMemo } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import React, { useMemo, useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth/AuthContext";
+import { api } from "../src/api/client"; // adjust if your axios client lives elsewhere
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -12,7 +20,36 @@ export default function ProfileScreen() {
 
   const BRAND_GREEN = "#2FA84F";
 
-  const user = state.user;
+  // Fetch fresh profile from /users/me (so we don't rely only on state.user)
+  const [me, setMe] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    if (state.status !== "signedIn") return;
+
+    setLoading(true);
+    api
+      .get("/users/me")
+      .then((r) => {
+        if (!alive) return;
+        setMe(r.data);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setMe(null);
+      })
+      .finally(() => {
+        if (!alive) return;
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [state.status]);
+
+  const user = me ?? state.user;
 
   const initials = useMemo(() => {
     const base =
@@ -49,14 +86,81 @@ export default function ProfileScreen() {
     );
   }
 
-  // Adjust these keys to match your backend payload (safe: shows "—" if missing)
+  // Optionally show loading (inside signedIn block, before computing u)
+  if (loading && !user) {
+    return (
+      <SafeAreaView edges={["left", "right"]} style={styles.screen}>
+        <View style={[styles.topbar, { paddingTop: Math.max(insets.top, 8) }]}>
+          <Pressable onPress={() => router.back()} style={styles.topbarIcon}>
+            <Ionicons name="arrow-back" size={20} color="#0F172A" />
+          </Pressable>
+          <Text style={styles.topbarTitle}>Profil</Text>
+          <View style={{ width: 34 }} />
+        </View>
+        <View style={styles.center}>
+          <ActivityIndicator />
+          <Text style={[styles.muted, { marginTop: 10 }]}>
+            Chargement du profil…
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const u: any = user;
+
+  // Helpers
+  const fmt = (v: any) => {
+    if (v === null || v === undefined || v === "") return "—";
+    return String(v);
+  };
+  const fmtBool = (v: any) => (v === true ? "Oui" : v === false ? "Non" : "—");
+  const fmtDate = (v: any) => {
+    if (!v) return "—";
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? fmt(v) : d.toLocaleDateString();
+  };
+  const mask = (v: any, keepLast = 4) => {
+    const s = String(v || "");
+    if (!s) return "—";
+    if (s.length <= keepLast) return "••••";
+    return "•••• " + s.slice(-keepLast);
+  };
+
+  // Remarque: selon votre backend, ces champs peuvent être au root (u.telephone)
+  // ou sous un objet profile (u.profile.telephone). On essaye les deux.
+  const p = u?.profile ?? u;
+
   const rows: Array<{ label: string; value: string }> = [
-    { label: "ID", value: String((user as any)?.id ?? "—") },
-    { label: "Username", value: String((user as any)?.username ?? "—") },
-    { label: "Nom", value: String((user as any)?.full_name ?? (user as any)?.name ?? "—") },
-    { label: "Email", value: String((user as any)?.email ?? "—") },
-    { label: "Rôle", value: String((user as any)?.role ?? "—") },
-    { label: "Téléphone", value: String((user as any)?.phone ?? "—") },
+    { label: "ID", value: fmt(u?.id) },
+    { label: "Username", value: fmt(u?.username) },
+    { label: "Nom", value: fmt(u?.full_name ?? u?.name) },
+    { label: "Date de naissance", value: fmtDate(p?.date_of_birth) },
+    { label: "Genre", value: fmt(p?.gender) },
+    { label: "Situation", value: fmt(p?.situation) },
+    { label: "Email", value: fmt(u?.email) },
+    { label: "Téléphone", value: fmt(p?.telephone ?? u?.phone) },
+    { label: "Adresse", value: fmt(p?.adresse) },
+    { label: "Poste", value: fmt(p?.job_name) },
+    { label: "Rôle", value: fmt(u?.role ?? p?.rolee) },
+    { label: "Congé", value: p?.conge != null ? `${p.conge}` : "—" },
+
+    // Champs accounts_userprofile
+    { label: "Entreprise", value: fmt(p?.company) },
+    { label: "Famille", value: fmt(p?.family) },
+    { label: "Spécialité (rôle)", value: fmt(p?.speciality_rolee) },
+    { label: "Région", value: fmt(p?.region) },
+    { label: "Contrat", value: fmt(p?.contract) },
+    { label: "Code contrat", value: fmt(p?.code_contrat) },
+    { label: "Code section", value: fmt(p?.code_section) },
+    { label: "Date d’entrée", value: fmtDate(p?.entry_date) },
+    { label: "CNAS", value: fmt(p?.CNAS) },
+
+    
+    // Informations sensibles: masquées
+    { label: "Salaire", value: p?.salary != null ? `${p.salary}` : "—" },
+    { label: "Banque", value: fmt(p?.bank_name) },
+    { label: "Compte bancaire", value: mask(p?.bank_account) },
   ];
 
   return (
@@ -69,7 +173,11 @@ export default function ProfileScreen() {
 
         <Text style={styles.topbarTitle}>Profil</Text>
 
-        <Pressable onPress={logout} style={styles.topbarIcon} accessibilityLabel="Déconnexion">
+        <Pressable
+          onPress={logout}
+          style={styles.topbarIcon}
+          accessibilityLabel="Déconnexion"
+        >
           <Ionicons name="log-out-outline" size={20} color={BRAND_GREEN} />
         </Pressable>
       </View>
@@ -89,7 +197,10 @@ export default function ProfileScreen() {
 
           <View style={{ flex: 1 }}>
             <Text style={styles.nameText}>
-              {(user as any)?.full_name || (user as any)?.name || (user as any)?.username || "Utilisateur"}
+              {(user as any)?.full_name ||
+                (user as any)?.name ||
+                (user as any)?.username ||
+                "Utilisateur"}
             </Text>
             <Text style={styles.subText}>
               {(user as any)?.email || (user as any)?.role || "Compte connecté"}
@@ -110,8 +221,6 @@ export default function ProfileScreen() {
             </View>
           ))}
         </View>
-
-      
       </ScrollView>
     </SafeAreaView>
   );
@@ -175,7 +284,12 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 10,
   },
-  cardTitle: { fontSize: 14, fontWeight: "900", color: "#0F172A", marginBottom: 10 },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#0F172A",
+    marginBottom: 10,
+  },
 
   row: {
     flexDirection: "row",

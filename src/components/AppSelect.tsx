@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   Modal,
@@ -18,10 +18,21 @@ export type AppSelectOption = {
   label: string;
   /** Ligne 2 optionnelle (ex: Wilaya / Commune) */
   subtitle?: string;
-  /** Optionnel: aide à la recherche (ex: "alger alger-centre cardiologue") */
+  /** Ligne 3 optionnelle (ex: Dernière visite) */
+  metaLine?: string;
+  /** Optionnel: aide à la recherche */
   keywords?: string;
-};
 
+  /**
+   * Optional: per-option border tag (preferred).
+   * If set, it overrides the global prop optionRowBorder.
+   */
+  plan_border?: "none" | "green" | "yellow";
+  /**
+   * Optional: alternative field name supported (legacy/compat).
+   */
+  row_border?: "none" | "green" | "yellow";
+};
 
 type Props = {
   title: string;
@@ -36,10 +47,11 @@ type Props = {
   allowClear?: boolean;
 
   showId?: boolean;
+  /** Optional: add colored border on each option row (modal list) */
+  optionRowBorder?: "none" | "green" | "yellow";
 
   onChange: (id: number | string | null) => void;
 };
-
 
 export function AppSelect({
   title,
@@ -51,28 +63,38 @@ export function AppSelect({
   disabled,
   allowClear = true,
   showId = false,
+  optionRowBorder = "none",
+
   onChange,
 }: Props) {
-
   const [open, setOpen] = useState(false);
+
+  // Search query (typed)
   const [q, setQ] = useState("");
+  // Debounced query (used for filtering)
+  const [debouncedQ, setDebouncedQ] = useState("");
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 120);
+    return () => clearTimeout(t);
+  }, [q]);
 
   const selectedOption = useMemo(() => {
-  if (value === null || value === undefined) return null;
-  return options.find((o) => String(o.id) === String(value)) ?? null;
-}, [options, value]);
-
+    if (value === null || value === undefined) return null;
+    return options.find((o) => String(o.id) === String(value)) ?? null;
+  }, [options, value]);
 
   const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
+    const query = debouncedQ.trim().toLowerCase();
     if (!query) return options;
 
     return options.filter((o) => {
-      const hay = `${o.label} ${o.subtitle ?? ""} ${o.keywords ?? ""}`.toLowerCase();
+      const hay =
+        `${o.label} ${o.subtitle ?? ""} ${o.metaLine ?? ""} ${o.keywords ?? ""}`.toLowerCase();
 
       return hay.includes(query);
     });
-  }, [options, q]);
+  }, [options, debouncedQ]);
 
   const openModal = () => {
     if (disabled) return;
@@ -99,29 +121,36 @@ export function AppSelect({
           </Text>
 
           <Text
-  style={[
-    styles.selectValue,
-    !selectedOption ? styles.selectPlaceholder : null,
-  ]}
-  numberOfLines={2}
->
-  {selectedOption ? (
-    <>
-      {showId ? (
-        <Text style={styles.idText}>{String(selectedOption.id)} </Text>
-      ) : null}
-      <Text>
-        {showId ? `- ${selectedOption.label}` : selectedOption.label}
-      </Text>
-      {selectedOption.subtitle ? (
-        <Text style={styles.subtitleText}>{`\n${selectedOption.subtitle}`}</Text>
-      ) : null}
-    </>
-  ) : (
-    placeholder
-  )}
-</Text>
+            style={[
+              styles.selectValue,
+              !selectedOption ? styles.selectPlaceholder : null,
+            ]}
+            numberOfLines={2}
+          >
+            {selectedOption ? (
+              <>
+                {showId ? (
+                  <Text style={styles.idText}>{String(selectedOption.id)} </Text>
+                ) : null}
+                <Text>
+                  {showId ? `- ${selectedOption.label}` : selectedOption.label}
+                </Text>
+                {selectedOption.subtitle ? (
+                  <Text
+                    style={styles.subtitleText}
+                  >{`\n${selectedOption.subtitle}`}</Text>
+                ) : null}
 
+                {selectedOption.metaLine ? (
+                  <Text
+                    style={styles.metaLineText}
+                  >{`\n${selectedOption.metaLine}`}</Text>
+                ) : null}
+              </>
+            ) : (
+              placeholder
+            )}
+          </Text>
         </View>
 
         <Ionicons name="chevron-down" size={18} color={COLORS.textMuted} />
@@ -144,9 +173,7 @@ export function AppSelect({
 
             <View style={{ flex: 1, alignItems: "center" }}>
               <Text style={styles.modalTitle}>{title}</Text>
-              {titleAr ? (
-                <Text style={styles.modalTitleAr}>{titleAr}</Text>
-              ) : null}
+              {titleAr ? <Text style={styles.modalTitleAr}>{titleAr}</Text> : null}
             </View>
 
             {allowClear ? (
@@ -178,6 +205,7 @@ export function AppSelect({
 
           <FlatList
             data={filtered}
+            extraData={value}
             keyExtractor={(item) => String(item.id)}
             keyboardShouldPersistTaps="handled"
             initialNumToRender={18}
@@ -188,40 +216,47 @@ export function AppSelect({
             ItemSeparatorComponent={() => <View style={styles.sep} />}
             renderItem={({ item }) => {
               const isSelected = String(item.id) === String(value);
+
+              // NEW: per-option border tag, fallback to global prop
+              const rowBorder =
+                (item as any)?.plan_border ?? (item as any)?.row_border ?? optionRowBorder;
+
               return (
                 <Pressable
                   onPress={() => commitChange(item.id)}
                   style={[
                     styles.optionRow,
+                    rowBorder === "green" ? styles.optionRowBorderGreen : null,
+                    rowBorder === "yellow" ? styles.optionRowBorderYellow : null,
                     isSelected ? styles.optionRowSelected : null,
                   ]}
                 >
-                 <View style={styles.optionLeft}>
-  {showId ? (
-    <View style={styles.idPill}>
-      <Text style={styles.idPillText}>{String(item.id)}</Text>
-    </View>
-  ) : null}
+                  <View style={styles.optionLeft}>
+                    {showId ? (
+                      <View style={styles.idPill}>
+                        <Text style={styles.idPillText}>{String(item.id)}</Text>
+                      </View>
+                    ) : null}
 
-  <View style={{ flex: 1 }}>
-    <Text style={styles.optionLabel} numberOfLines={2}>
-      {item.label}
-    </Text>
-    {item.subtitle ? (
-      <Text style={styles.optionSub} numberOfLines={1}>
-        {item.subtitle}
-      </Text>
-    ) : null}
-  </View>
-</View>
-
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.optionLabel} numberOfLines={2}>
+                        {item.label}
+                      </Text>
+                      {item.subtitle ? (
+                        <Text style={styles.optionSub} numberOfLines={1}>
+                          {item.subtitle}
+                        </Text>
+                      ) : null}
+                      {item.metaLine ? (
+                        <Text style={styles.optionMeta} numberOfLines={1}>
+                          {item.metaLine}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
 
                   {isSelected ? (
-                    <Ionicons
-                      name="checkmark"
-                      size={20}
-                      color={COLORS.brand}
-                    />
+                    <Ionicons name="checkmark" size={20} color={COLORS.brand} />
                   ) : null}
                 </Pressable>
               );
@@ -254,8 +289,17 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   selectDisabled: { opacity: 0.6 },
-  selectLabel: { fontSize: TYPO.small, fontWeight: "800", color: COLORS.textMuted },
-  selectValue: { fontSize: 14, fontWeight: "900", color: COLORS.text, marginTop: 2 },
+  selectLabel: {
+    fontSize: TYPO.small,
+    fontWeight: "800",
+    color: COLORS.textMuted,
+  },
+  selectValue: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: COLORS.text,
+    marginTop: 2,
+  },
   selectPlaceholder: { color: COLORS.textMuted, fontWeight: "800" },
 
   // Modal
@@ -331,24 +375,50 @@ const styles = StyleSheet.create({
   sep: { height: SPACING.md },
 
   idText: { color: COLORS.brand, fontWeight: "900" },
-subtitleText: { color: COLORS.textMuted, fontWeight: "800" },
+  subtitleText: { color: COLORS.textMuted, fontWeight: "800" },
 
-optionLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  optionLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
 
-idPill: {
-  minWidth: 42,
-  paddingHorizontal: 10,
-  paddingVertical: 6,
-  borderRadius: 999,
-  backgroundColor: COLORS.brandSoft,
-  borderWidth: 1,
-  borderColor: "rgba(50,161,55,0.25)",
-  alignItems: "center",
-  justifyContent: "center",
-},
-idPillText: { color: COLORS.brand, fontWeight: "900" },
+  idPill: {
+    minWidth: 42,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: COLORS.brandSoft,
+    borderWidth: 1,
+    borderColor: "rgba(50,161,55,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  idPillText: { color: COLORS.brand, fontWeight: "900" },
 
-optionLabel: { color: COLORS.text, fontWeight: "900" },
-optionSub: { marginTop: 3, color: COLORS.textMuted, fontWeight: "800", fontSize: 12 },
+  optionLabel: { color: COLORS.text, fontWeight: "900" },
+  optionSub: {
+    marginTop: 3,
+    color: COLORS.textMuted,
+    fontWeight: "800",
+    fontSize: 12,
+  },
 
+  metaLineText: {
+    color: COLORS.warning, // or brand / info color
+    fontWeight: "800",
+    fontSize: 12,
+  },
+
+  optionMeta: {
+    marginTop: 2,
+    color: COLORS.warning,
+    fontWeight: "700",
+    fontSize: 11,
+  },
+
+  optionRowBorderGreen: {
+    borderWidth: 2,
+    borderColor: "rgba(50,161,55,0.85)",
+  },
+  optionRowBorderYellow: {
+    borderWidth: 2,
+    borderColor: "rgba(245, 206, 11, 0.9)",
+  },
 });

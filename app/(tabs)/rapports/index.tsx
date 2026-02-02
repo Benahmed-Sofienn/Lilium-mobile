@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 
 import { api } from "../../../src/api/client";
 import { useAuth } from "../../../src/auth/AuthContext";
@@ -64,7 +64,6 @@ type Rapport = {
   hasMoreComments: boolean;
 };
 
-
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -102,73 +101,67 @@ export default function RapportsIndex() {
 
   const didInitSelectedUser = React.useRef(false);
 
-
- 
-  
-
   const canShowUserDropdown = useMemo(() => {
     if (!signedIn) return false;
     if (isAdmin) return true;
     return role === "Countrymanager" || role === "Superviseur";
   }, [signedIn, role, isAdmin]);
 
-
-
   const canEditNote = useMemo(() => {
-  if (!signedIn) return false;
-  if (isAdmin) return true;
-  return role === "Countrymanager" || role === "Superviseur";
-}, [signedIn, role, isAdmin]);
+    if (!signedIn) return false;
+    if (isAdmin) return true;
+    return role === "Countrymanager" || role === "Superviseur";
+  }, [signedIn, role, isAdmin]);
 
-const canComment = useMemo(() => {
-  if (!signedIn) return false;
-  // all roles can comment once authenticated
-  return true;
-}, [signedIn]);
-
+  const canComment = useMemo(() => {
+    if (!signedIn) return false;
+    // all roles can comment once authenticated
+    return true;
+  }, [signedIn]);
 
   const userOptions = useMemo<AppSelectOption[]>(() => {
-  if (!signedIn) return [];
+    if (!signedIn) return [];
 
-  const base = refUsers.map((u) => {
-    const label = prettyName({ id: u.id, first_name: u.first_name, last_name: u.last_name });
-    return { id: String(u.id), label, keywords: label };
-  });
+    const base = refUsers.map((u) => {
+      const label = prettyName({ id: u.id, first_name: u.first_name, last_name: u.last_name });
+      return { id: String(u.id), label, keywords: label };
+    });
 
-  const myId = me?.id ? String(me.id) : null;
-  const myLabel = me?.id
-    ? prettyName({ id: me.id, first_name: (me as any).first_name, last_name: (me as any).last_name })
-    : null;
+    const myId = me?.id ? String(me.id) : null;
+    const myLabel = me?.id
+      ? prettyName({
+          id: me.id,
+          first_name: (me as any).first_name,
+          last_name: (me as any).last_name,
+        })
+      : null;
 
-  // Put me first (if present in list), then the rest
-  const meOpt =
-    myId && myLabel ? [{ id: myId, label: myLabel, keywords: myLabel }] : [];
+    // Put me first (if present in list), then the rest
+    const meOpt = myId && myLabel ? [{ id: myId, label: myLabel, keywords: myLabel }] : [];
 
-  const rest = myId ? base.filter((x) => x.id !== myId) : base;
+    const rest = myId ? base.filter((x) => x.id !== myId) : base;
 
-  // Countrymanager/Admin can pick “Tous”
-  if (isAdmin || role === "Countrymanager") {
-    return [{ id: "tous", label: "Tous | الكل", keywords: "tous all" }, ...meOpt, ...rest];
-  }
+    // Countrymanager/Admin can pick “Tous”
+    if (isAdmin || role === "Countrymanager") {
+      return [{ id: "tous", label: "Tous | الكل", keywords: "tous all" }, ...meOpt, ...rest];
+    }
 
-  // Superviseur: me first, then underusers (already scoped by backend referentiels)
-  if (role === "Superviseur") {
-    return [...meOpt, ...rest];
-  }
+    // Superviseur: me first, then underusers (already scoped by backend referentiels)
+    if (role === "Superviseur") {
+      return [...meOpt, ...rest];
+    }
 
-  return base;
-}, [signedIn, refUsers, me, role, isAdmin]);
-
+    return base;
+  }, [signedIn, refUsers, me, role, isAdmin]);
 
   const loadReferentiels = useCallback(async () => {
     if (!signedIn) return;
 
-    const res = await api.get("/rapports/referentiels");
-    const users = (res.data?.users || []) as RefUser[];
-    setRefUsers(users);
-
-    
-  }, [signedIn, me, role, isAdmin]);
+    // Source unique et "scopée" pour la liste Utilisateur
+    const res = await api.get("/plans/scope-users");
+    const users = (res.data?.users || res.data || []) as RefUser[];
+    setRefUsers(Array.isArray(users) ? users : []);
+  }, [signedIn]);
 
   const loadRapports = useCallback(async () => {
     if (!signedIn) return;
@@ -178,61 +171,64 @@ const canComment = useMemo(() => {
 
     try {
       const params: any = {
-  // New style (future-proof)
-  dateStart: toYmd(fromDate),
-  dateEnd: toYmd(toDate),
+        // New style (future-proof)
+        dateStart: toYmd(fromDate),
+        dateEnd: toYmd(toDate),
 
-  // Backward compatible with your CURRENT backend (required today)
-  year: fromDate.getFullYear(),
-  month: fromDate.getMonth() + 1,
+        // Backward compatible with your CURRENT backend (required today)
+        year: fromDate.getFullYear(),
+        month: fromDate.getMonth() + 1,
 
-  limit: 50,
-};
-
-
+        limit: 50,
+      };
 
       // userId optional:
       // - Countrymanager/admin: "" means all
       // - Superviseur: id chosen
       // - Commercial: can omit, backend will scope; but sending my id is fine
       if (canShowUserDropdown) {
-  // "tous" => do not send userId
-  if (selectedUserId && selectedUserId !== "tous") params.userId = selectedUserId;
-} else if (me?.id) {
-  params.userId = String(me.id);
-}
-
+        // "tous" => do not send userId
+        if (selectedUserId && selectedUserId !== "tous") params.userId = selectedUserId;
+      } else if (me?.id) {
+        params.userId = String(me.id);
+      }
 
       const res = await api.get("/rapports", { params });
 
       const results = (res.data?.results || []) as Rapport[];
       setItems(results);
     } catch (e: any) {
-  const status = e?.response?.status;
-  const data = e?.response?.data;
+      const status = e?.response?.status;
+      const data = e?.response?.data;
 
-  setErrorMsg(
-    status
-      ? `LISTE HTTP ${status} — ${data?.error || data?.message || e?.message || "Erreur"}`
-      : `LISTE — ${e?.message || "Erreur lors du chargement."}`
-  );
-  setItems([]);
-}
- finally {
+      setErrorMsg(
+        status
+          ? `LISTE HTTP ${status} — ${data?.error || data?.message || e?.message || "Erreur"}`
+          : `LISTE — ${e?.message || "Erreur lors du chargement."}`
+      );
+      setItems([]);
+    } finally {
       setLoading(false);
     }
   }, [signedIn, fromDate, toDate, selectedUserId, canShowUserDropdown, me]);
 
+  // NEW: Refetch when coming back to this screen (focus)
+  useFocusEffect(
+    useCallback(() => {
+      if (!signedIn) return;
+      loadRapports();
+    }, [signedIn, loadRapports])
+  );
+
   useEffect(() => {
-  if (!signedIn || !me?.id) return;
-  if (didInitSelectedUser.current) return;
+    if (!signedIn || !me?.id) return;
+    if (didInitSelectedUser.current) return;
 
-  if (isAdmin || role === "Countrymanager") setSelectedUserId("tous"); // default all
-  else setSelectedUserId(String(me.id)); // default = connected user id (name shown)
+    if (isAdmin || role === "Countrymanager") setSelectedUserId("tous"); // default all
+    else setSelectedUserId(String(me.id)); // default = connected user id (name shown)
 
-  didInitSelectedUser.current = true;
-}, [signedIn, me, role, isAdmin]);
-
+    didInitSelectedUser.current = true;
+  }, [signedIn, me, role, isAdmin]);
 
   useEffect(() => {
     if (!signedIn) return;
@@ -240,15 +236,14 @@ const canComment = useMemo(() => {
       try {
         await loadReferentiels();
       } catch (e: any) {
-  const status = e?.response?.status;
-  const data = e?.response?.data;
-  setErrorMsg(
-    status
-      ? `REFERENTIELS HTTP ${status} — ${data?.error || data?.message || e?.message || "Erreur"}`
-      : `REFERENTIELS — ${e?.message || "Erreur"}`
-  );
-}
-
+        const status = e?.response?.status;
+        const data = e?.response?.data;
+        setErrorMsg(
+          status
+            ? `REFERENTIELS HTTP ${status} — ${data?.error || data?.message || e?.message || "Erreur"}`
+            : `REFERENTIELS — ${e?.message || "Erreur"}`
+        );
+      }
     })();
   }, [signedIn, loadReferentiels]);
 
@@ -267,8 +262,7 @@ const canComment = useMemo(() => {
     }
   }, [signedIn, loadRapports]);
 
-  const submitCommentInline = useCallback(
-  async (rapportId: number, text: string) => {
+  const submitCommentInline = useCallback(async (rapportId: number, text: string) => {
     const clean = text.trim();
     if (!clean) return;
 
@@ -292,10 +286,7 @@ const canComment = useMemo(() => {
         };
       })
     );
-  },
-  []
-);
-
+  }, []);
 
   const setNote = async (rapportId: number, note: number) => {
     try {
@@ -346,28 +337,23 @@ const canComment = useMemo(() => {
 
   return (
     <View style={styles.screen}>
-      <AppHeader
-        title="Liste des rapports"
-        titleAr="قائمة التقارير"
-        onBack={() => router.back()}
-      />
+      <AppHeader title="Liste des rapports" titleAr="قائمة التقارير" onBack={() => router.back()} />
 
       <View style={styles.content}>
         <AppCard style={styles.filtersCard}>
           {canShowUserDropdown ? (
-  <AppSelect
-    title="Utilisateur"
-    titleAr="المستخدم"
-    value={selectedUserId}
-    options={userOptions}
-    allowClear={false} // prevents null => broken filtering
-    onChange={(v) => {
-      if (v == null) return;
-      setSelectedUserId(String(v));
-    }}
-  />
-) : null}
-
+            <AppSelect
+              title="Utilisateur"
+              titleAr="المستخدم"
+              value={selectedUserId}
+              options={userOptions}
+              allowClear={false} // prevents null => broken filtering
+              onChange={(v) => {
+                if (v == null) return;
+                setSelectedUserId(String(v));
+              }}
+            />
+          ) : null}
 
           <View style={styles.dateRow}>
             <View style={{ flex: 1 }}>
@@ -420,29 +406,36 @@ const canComment = useMemo(() => {
             }
             renderItem={({ item }) => {
               const showOwner = isAdmin || role !== "Commercial";
-              const ownerName = prettyName({ id: item.user.id, first_name: item.user.first_name, last_name: item.user.last_name });
+              const ownerName = prettyName({
+                id: item.user.id,
+                first_name: item.user.first_name,
+                last_name: item.user.last_name,
+              });
 
-             return (
-  <View style={{ marginTop: SPACING.md }}>
-    <RapportCard
-  item={item}
-  canEditNote={canEditNote} // Only Superviseur/Countrymanager/Admin can edit note
-  canComment={canComment}   // Commercial can comment too
-  onSubmitComment={(text) => submitCommentInline(item.id, text)}
-  onSetNote={(rapportId, note) => {
-    // Hard-block note changes for Commercial at the screen level
-    if (!canEditNote) return;
-    setNote(rapportId, note);
-  }}
-/>
-
-  </View>
-);
+              return (
+                <View style={{ marginTop: SPACING.md }}>
+                  <RapportCard
+                    item={item}
+                    canEditNote={canEditNote}
+                    canComment={canComment}
+                    onSubmitComment={submitCommentInline}
+                    onSetNote={async (rapportId, note) => {
+                      if (!canEditNote) return;
+                      await setNote(rapportId, note);
+                    }}
+                    onOpenDetails={() =>
+                      router.push({
+                        pathname: "/(tabs)/rapports/[id]",
+                        params: { id: String(item.id) },
+                      })
+                    }
+                  />
+                </View>
+              );
             }}
           />
         )}
       </View>
-
     </View>
   );
 }
@@ -515,7 +508,13 @@ const styles = StyleSheet.create({
   lastCommentLine: { color: COLORS.text },
   moreComments: { marginTop: 4, color: COLORS.textMuted, fontWeight: "800" },
 
-  actionsRow: { marginTop: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  actionsRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   secondaryBtn: {
     height: 40,
     borderRadius: 12,

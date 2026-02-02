@@ -1,6 +1,6 @@
 // src/components/AppCard.tsx
 import React from "react";
-import { View, StyleSheet, ViewStyle } from "react-native";
+import { View, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
 import { COLORS, RADIUS, SPACING, cardShadow } from "../ui/theme";
 
 export function AppCard({
@@ -8,7 +8,7 @@ export function AppCard({
   style,
 }: {
   children: React.ReactNode;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
 }) {
   return <View style={[styles.card, style]}>{children}</View>;
 }

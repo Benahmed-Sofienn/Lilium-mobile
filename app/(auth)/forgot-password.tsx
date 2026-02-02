@@ -1,252 +1,331 @@
-import React, { useMemo, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert, Platform } from "react-native";
+import React, { useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
-type Step = "USERNAME" | "PHONE" | "OTP_RESET";
+import { djangoApi } from "../../src/api/client";
 
-const API_BASE =
-  (process.env.EXPO_PUBLIC_API_URL || "") +
-  (process.env.EXPO_PUBLIC_API_PREFIX || "");
-
-async function postJSON(path: string, body: any) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = data?.error || data?.message || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-  return data;
-}
+type RequestResp = { ok: boolean; masked_email?: string | null };
+type VerifyResp = { ok: boolean; valid: boolean };
+type ResetResp = { ok: boolean; errors?: string[] };
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
 
-  const BRAND_GREEN = "#2FA84F";
-
-  const [step, setStep] = useState<Step>("USERNAME");
-  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<1 | 2>(1);
 
   const [username, setUsername] = useState("");
-  const [challengeId, setChallengeId] = useState("");
-  const [maskedPhone, setMaskedPhone] = useState("");
+  const [maskedEmail, setMaskedEmail] = useState<string | null>(null);
 
-  const [phone, setPhone] = useState(""); // full phone input (E.164 ideally)
-  const [otp, setOtp] = useState("");
-
+  const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const canStart = useMemo(() => username.trim().length > 0 && !busy, [username, busy]);
-  const canConfirmPhone = useMemo(() => phone.trim().length >= 8 && !!challengeId && !busy, [phone, challengeId, busy]);
-  const canVerifyOtp = useMemo(() => otp.trim().length >= 4 && !!challengeId && !busy, [otp, challengeId, busy]);
-  const canReset =
-    useMemo(() => !busy && newPassword.length >= 6 && newPassword === confirmPassword, [busy, newPassword, confirmPassword]);
+  const [busy, setBusy] = useState(false);
 
-  const start = async () => {
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const codeRef = useRef<TextInput>(null);
+  const newPassRef = useRef<TextInput>(null);
+  const confirmPassRef = useRef<TextInput>(null);
+
+  const BRAND_GREEN = "#2FA84F";
+
+  const canRequest = useMemo(() => !busy && username.trim().length > 0, [busy, username]);
+
+  const canReset = useMemo(() => {
+    return (
+      !busy &&
+      username.trim().length > 0 &&
+      code.trim().length > 0 &&
+      newPassword.length >= 8 &&
+      confirmPassword.length >= 8
+    );
+  }, [busy, username, code, newPassword, confirmPassword]);
+
+  const requestCode = async () => {
     try {
       setBusy(true);
-      // You implement this endpoint in backend:
-      // POST /auth/forgot/start  { username }
-      const data = await postJSON("/auth/forgot/start", { username: username.trim() });
+      setMaskedEmail(null);
 
-      // Expected: { challengeId, maskedPhone }
-      setChallengeId(data.challengeId);
-      setMaskedPhone(data.maskedPhone);
+      const res = await djangoApi.post<RequestResp>(
+        "/accounts/api/app/forgot-password/request",
+        { username: username.trim() }
+      );
 
-      setStep("PHONE");
+      const m = res.data?.masked_email ?? null;
+
+      // Your rule:
+      // If masked_email is null, show admin-contact error and stay on step 1
+      if (!m || typeof m !== "string" || m.trim().length === 0) {
+        Alert.alert("Erreur", "Un problème est survenu , contactez l administration");
+        return;
+      }
+
+      setMaskedEmail(m);
+      setStep(2);
+      setTimeout(() => codeRef.current?.focus(), 50);
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed");
+      Alert.alert(
+        "Erreur",
+        e?.response?.data?.detail || e?.message || "Erreur inconnue"
+      );
     } finally {
       setBusy(false);
     }
   };
 
-  const confirmPhoneAndSendOtp = async () => {
+  const resetPassword = async () => {
     try {
-      setBusy(true);
-      // POST /auth/forgot/confirm-phone { challengeId, phone }
-      // This should validate phone == DB phone and then send OTP via WhatsApp
-      await postJSON("/auth/forgot/confirm-phone", {
-        challengeId,
-        phone: phone.trim(),
-      });
+      if (newPassword !== confirmPassword) {
+        Alert.alert("Erreur", "Les mots de passe ne correspondent pas.");
+        return;
+      }
 
-      Alert.alert("Code sent", "We sent a verification code to your WhatsApp.");
-      setStep("OTP_RESET");
-    } catch (e: any) {
-      // Keep errors generic to avoid leaking info
-      Alert.alert("Verification failed", "Could not verify your phone number.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const verifyOtpAndReset = async () => {
-    try {
       setBusy(true);
 
-      // 1) verify otp -> get resetToken
-      const v = await postJSON("/auth/forgot/verify-otp", { challengeId, otp: otp.trim() });
+      // Optional verify step (better UX)
+      const v = await djangoApi.post<VerifyResp>(
+        "/accounts/api/app/forgot-password/verify",
+        { username: username.trim(), code: code.trim() }
+      );
 
-      const resetToken = v.resetToken;
-      if (!resetToken) throw new Error("Missing reset token");
+      if (!v.data?.valid) {
+        Alert.alert("Erreur", "Code invalide ou expiré.");
+        return;
+      }
 
-      // 2) reset password
-      await postJSON("/auth/forgot/reset", { resetToken, newPassword });
+      const r = await djangoApi.post<ResetResp>(
+        "/accounts/api/app/forgot-password/reset",
+        {
+          username: username.trim(),
+          code: code.trim(),
+          new_password: newPassword,
+          confirm_password: confirmPassword,
+        }
+      );
 
-      Alert.alert("Done", "Your password has been reset. You can log in now.");
-      router.replace("/(auth)/login");
+      if (r.data?.ok) {
+        Alert.alert(
+          "Succès",
+          "Votre mot de passe a été changé. Vous pouvez vous connecter."
+        );
+        router.replace("/(auth)/login");
+      } else {
+        Alert.alert(
+          "Erreur",
+          (r.data?.errors && r.data.errors.join("\n")) ||
+            "Impossible de changer le mot de passe."
+        );
+      }
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed");
+      const msg =
+        e?.response?.data?.errors?.join?.("\n") ||
+        e?.response?.data?.detail ||
+        e?.message ||
+        "Erreur inconnue";
+      Alert.alert("Erreur", msg);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Forgot password | نسيت كلمة السر</Text>
-        <Text style={styles.subtitle}>
-          Verify your account, then set a new password.
-        </Text>
+    <Pressable onPress={Keyboard.dismiss} style={styles.screen}>
+      <KeyboardAwareScrollView
+        enableOnAndroid
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        extraScrollHeight={16}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>Forgot password</Text>
+          <Text style={styles.subtitle}>Réinitialiser | إعادة تعيين كلمة السر</Text>
+        </View>
 
-        {step === "USERNAME" && (
-          <>
-            <Text style={styles.label}>Username | اسم المستخدم</Text>
-            <TextInput
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              placeholder="Enter your username"
-              placeholderTextColor="#9AA3AF"
-              style={styles.input}
-            />
+        <View style={styles.card}>
+          {step === 1 ? (
+            <>
+              <Text style={styles.label}>Username | اسم المستخدم</Text>
+              <TextInput
+                value={username}
+                onChangeText={setUsername}
+                placeholder="Enter your username"
+                placeholderTextColor="#9AA3AF"
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={requestCode}
+                style={styles.input}
+              />
 
-            <Pressable
-              onPress={start}
-              disabled={!canStart}
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: BRAND_GREEN },
-                !canStart && { opacity: 0.5 },
-                pressed && canStart && { opacity: 0.9 },
-              ]}
-            >
-              {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Continue</Text>}
-            </Pressable>
-          </>
-        )}
+              <Text style={styles.helper}>
+                Entrez votre nom d’utilisateur. Un code sera envoyé par WhatsApp.
+              </Text>
 
-        {step === "PHONE" && (
-          <>
-            <Text style={styles.label}>Confirm your phone | تأكيد رقم الهاتف</Text>
-            <Text style={styles.muted}>
-              Number on file: <Text style={styles.mutedStrong}>{maskedPhone}</Text>
-            </Text>
+              <Pressable
+                onPress={requestCode}
+                disabled={!canRequest}
+                style={({ pressed }) => [
+                  styles.button,
+                  { backgroundColor: BRAND_GREEN },
+                  !canRequest && styles.buttonDisabled,
+                  pressed && canRequest && styles.buttonPressed,
+                ]}
+              >
+                {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>Send code</Text>}
+              </Pressable>
 
-            <TextInput
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="Enter full number (e.g. +213XXXXXXXXX)"
-              placeholderTextColor="#9AA3AF"
-              keyboardType={Platform.OS === "ios" ? "numbers-and-punctuation" : "phone-pad"}
-              style={styles.input}
-            />
+              <Pressable
+                onPress={() => router.back()}
+                style={({ pressed }) => [styles.linkBtn, pressed && { opacity: 0.75 }]}
+              >
+                <Text style={styles.linkText}>Back to login</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={styles.infoText}>
+                Vous allez recevoir un message WhatsApp au{" "}
+                <Text style={styles.infoStrong}>{maskedEmail}</Text>.
+              </Text>
 
-            <Pressable
-              onPress={confirmPhoneAndSendOtp}
-              disabled={!canConfirmPhone}
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: BRAND_GREEN },
-                !canConfirmPhone && { opacity: 0.5 },
-                pressed && canConfirmPhone && { opacity: 0.9 },
-              ]}
-            >
-              {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Send code on WhatsApp</Text>}
-            </Pressable>
+              <Text style={[styles.label, { marginTop: 12 }]}>Code</Text>
+              <TextInput
+                ref={codeRef}
+                value={code}
+                onChangeText={setCode}
+                placeholder="Enter code"
+                placeholderTextColor="#9AA3AF"
+                keyboardType="number-pad"
+                returnKeyType="next"
+                onSubmitEditing={() => newPassRef.current?.focus()}
+                style={styles.input}
+              />
 
-            <Pressable onPress={() => setStep("USERNAME")} style={styles.linkBtn}>
-              <Text style={[styles.link, { color: BRAND_GREEN }]}>Change username</Text>
-            </Pressable>
-          </>
-        )}
+              <Text style={[styles.label, { marginTop: 12 }]}>New password</Text>
+              <View style={styles.passwordWrap}>
+                <TextInput
+                  ref={newPassRef}
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  placeholder="New password"
+                  placeholderTextColor="#9AA3AF"
+                  secureTextEntry={!showNew}
+                  autoCapitalize="none"
+                  returnKeyType="next"
+                  onSubmitEditing={() => confirmPassRef.current?.focus()}
+                  style={[styles.input, { paddingRight: 44 }]}
+                />
+                <Pressable onPress={() => setShowNew((v) => !v)} style={styles.eyeBtn} hitSlop={10}>
+                  <Ionicons name={showNew ? "eye-off-outline" : "eye-outline"} size={20} color="#64748B" />
+                </Pressable>
+              </View>
 
-        {step === "OTP_RESET" && (
-          <>
-            <Text style={styles.label}>OTP code | رمز التحقق</Text>
-            <TextInput
-              value={otp}
-              onChangeText={setOtp}
-              placeholder="Enter the code"
-              placeholderTextColor="#9AA3AF"
-              keyboardType="number-pad"
-              style={styles.input}
-            />
+              <Text style={[styles.label, { marginTop: 12 }]}>Confirm password</Text>
+              <View style={styles.passwordWrap}>
+                <TextInput
+                  ref={confirmPassRef}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder="Confirm password"
+                  placeholderTextColor="#9AA3AF"
+                  secureTextEntry={!showConfirm}
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                  onSubmitEditing={resetPassword}
+                  style={[styles.input, { paddingRight: 44 }]}
+                />
+                <Pressable onPress={() => setShowConfirm((v) => !v)} style={styles.eyeBtn} hitSlop={10}>
+                  <Ionicons name={showConfirm ? "eye-off-outline" : "eye-outline"} size={20} color="#64748B" />
+                </Pressable>
+              </View>
 
-            <Text style={[styles.label, { marginTop: 10 }]}>New password | كلمة سر جديدة</Text>
-            <TextInput
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder="New password"
-              placeholderTextColor="#9AA3AF"
-              secureTextEntry
-              style={styles.input}
-            />
+              <Pressable
+                onPress={resetPassword}
+                disabled={!canReset}
+                style={({ pressed }) => [
+                  styles.button,
+                  { backgroundColor: BRAND_GREEN },
+                  !canReset && styles.buttonDisabled,
+                  pressed && canReset && styles.buttonPressed,
+                ]}
+              >
+                {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>Reset password</Text>}
+              </Pressable>
 
-            <TextInput
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="Confirm password"
-              placeholderTextColor="#9AA3AF"
-              secureTextEntry
-              style={[styles.input, { marginTop: 10 }]}
-            />
-
-            <Pressable
-              onPress={verifyOtpAndReset}
-              disabled={!canVerifyOtp || !canReset}
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: BRAND_GREEN },
-                (!canVerifyOtp || !canReset) && { opacity: 0.5 },
-                pressed && canVerifyOtp && canReset && { opacity: 0.9 },
-              ]}
-            >
-              {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Reset password</Text>}
-            </Pressable>
-          </>
-        )}
-
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backText}>Back</Text>
-        </Pressable>
-      </View>
-    </View>
+              <Pressable
+                onPress={() => setStep(1)}
+                style={({ pressed }) => [styles.linkBtn, pressed && { opacity: 0.75 }]}
+              >
+                <Text style={styles.linkText}>Change username</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      </KeyboardAwareScrollView>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#F5F7FA", justifyContent: "center", padding: 20 },
-  card: { backgroundColor: "#FFF", borderRadius: 18, padding: 18, borderWidth: 1, borderColor: "#E5E7EB" },
-  title: { fontSize: 18, fontWeight: "800", color: "#0F172A" },
-  subtitle: { marginTop: 8, fontSize: 13, color: "#64748B" },
-  label: { marginTop: 14, marginBottom: 8, fontSize: 13, fontWeight: "700", color: "#334155" },
-  input: {
-    borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#FAFAFB", borderRadius: 12,
-    paddingHorizontal: 12, paddingVertical: 12, fontSize: 15, color: "#0F172A",
+  screen: { flex: 1, backgroundColor: "#F5F7FA" },
+  scrollContent: { flexGrow: 1, paddingHorizontal: 20, justifyContent: "center" },
+  header: { alignItems: "center", marginBottom: 18 },
+  title: { fontSize: 22, fontWeight: "800", color: "#0F172A" },
+  subtitle: { fontSize: 14, color: "#64748B", marginTop: 6 },
+
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
-  muted: { marginBottom: 10, fontSize: 13, color: "#64748B" },
-  mutedStrong: { fontWeight: "800", color: "#0F172A" },
+
+  label: { fontSize: 13, fontWeight: "700", color: "#334155", marginBottom: 8 },
+  input: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#FAFAFB",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#0F172A",
+  },
+
+  helper: { marginTop: 10, fontSize: 12, color: "#64748B" },
+
+  infoText: { fontSize: 13, color: "#334155", lineHeight: 18 },
+  infoStrong: { fontWeight: "800", color: "#0F172A" },
+
+  passwordWrap: { position: "relative", justifyContent: "center" },
+  eyeBtn: {
+    position: "absolute",
+    right: 12,
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
   button: { marginTop: 16, borderRadius: 12, paddingVertical: 13, alignItems: "center" },
-  buttonText: { color: "#FFF", fontSize: 15, fontWeight: "800" },
-  linkBtn: { marginTop: 10, alignSelf: "flex-end", paddingVertical: 4 },
-  link: { fontSize: 13, fontWeight: "700" },
-  backBtn: { marginTop: 16, alignSelf: "center", paddingVertical: 8 },
-  backText: { fontSize: 13, fontWeight: "700", color: "#334155" },
+  buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
+  buttonDisabled: { opacity: 0.5 },
+  buttonPressed: { opacity: 0.9 },
+
+  linkBtn: { alignSelf: "center", marginTop: 12, paddingVertical: 6 },
+  linkText: { fontSize: 13, fontWeight: "700", color: "#334155" },
 });

@@ -13,10 +13,10 @@
     },
     "android": {
       "usesCleartextTraffic": true,
-       "adaptiveIcon": {
-    "foregroundImage": "./assets/images/android-icon-foreground.png",
-    "backgroundColor": "#E6F4FE"
-  },
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundColor": "#E6F4FE"
+      },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -57,7 +57,8 @@
           "project": "react-native",
           "organization": "sofien-7y"
         }
-      ]
+      ],
+      "expo-speech-recognition"
     ],
     "experiments": {
       "typedRoutes": true,

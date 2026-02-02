@@ -112,6 +112,12 @@ const isCommercialSpecialite = (specialiteLabel: any) => {
   const spec = normalizeText(specialiteLabel);
   return COMMERCIAL_SPECIALITE_KEYWORDS.some((kw) => spec.includes(normalizeText(kw)));
 };
+function normalizeRole(r: any): UserRole {
+  const v = String(r || "").toLowerCase();
+  if (v.includes("super")) return "Superviseur";
+  if (v.includes("country")) return "Countrymanager";
+  return "Commercial";
+}
 
 const buildMedecinsStats = (list: any[]) => {
   let medicalTotal = 0;
@@ -188,7 +194,8 @@ export default function MedecinsIndex() {
   const signedIn = state.status === "signedIn";
   const me = signedIn ? state.user : null;
 
-  const role: UserRole = ((me as any)?.role as UserRole) || ((me as any)?.rolee as UserRole) || "Commercial";
+  const role: UserRole = normalizeRole((me as any)?.role ?? (me as any)?.rolee);
+
   const showUserFilter = role === "Countrymanager" || role === "Superviseur";
 
   const [refs, setRefs] = useState<Referentiels>({
@@ -248,11 +255,12 @@ useEffect(() => {
   if (!signedIn || !(me as any)?.id) return;
   if (didInitUserFilter.current) return;
 
-  // Default = connected user (by id). Label shown will be their name.
-  setUserFilter(String((me as any).id));
+  const r = normalizeRole((me as any)?.role ?? (me as any)?.rolee);
+  setUserFilter(r === "Countrymanager" ? "tous" : String((me as any).id));
 
   didInitUserFilter.current = true;
 }, [signedIn, me]);
+
 
 
   useEffect(() => {

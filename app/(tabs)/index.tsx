@@ -50,7 +50,6 @@ export default function HomeDashboard() {
         titleAr: "التخطيط",
         leftIcon: "calendar-text",
         listRoute: "/planning" as const,
-        newRoute: "/planning/new" as const,
       },
       {
         key: "medecins",
@@ -58,7 +57,6 @@ export default function HomeDashboard() {
         titleAr: "قائمة الأطباء",
         leftIcon: "clipboard-text",
         listRoute: "/medecins" as const,
-        // ✅ no newRoute => no +
       },
       {
         key: "rapports",

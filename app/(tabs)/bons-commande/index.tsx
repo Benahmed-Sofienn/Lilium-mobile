@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,6 +23,8 @@ import { COLORS, RADIUS, SPACING, TYPO } from "../../../src/ui/theme";
 import { AppHeader } from "../../../src/components/AppHeader";
 import { AppCard } from "../../../src/components/AppCard";
 import { AppSelect, AppSelectOption } from "../../../src/components/AppSelect";
+import { ZoomableImage } from "../../../src/components/ZoomableImage";
+
 
 
 type UserRole = "Commercial" | "Superviseur" | "Countrymanager";
@@ -38,6 +41,7 @@ type BonCommandeItem = {
   produits: string;
   observation?: string | null;
   flag?: boolean;
+  image?: string | null;
 };
 
 type ListResponse = BonCommandeItem[] | { items: BonCommandeItem[]; nextCursor: number | null };
@@ -101,12 +105,30 @@ function renderProduitsWithCounts(text: string) {
   );
 }
 
+function buildOrderImageUrl(imagePath?: string | null) {
+  const p = String(imagePath ?? "").trim();
+  if (!p) return null;
+
+  if (/^https?:\/\//i.test(p)) return p;
+
+  const base0 = String((api.defaults as any)?.baseURL ?? "").replace(/\/+$/, "");
+  const base = base0.replace(/\/api$/i, ""); // important
+
+  if (!base) return p.startsWith("/") ? p : `/${p}`;
+
+  if (p.startsWith("/")) return `${base}${p}`;
+  if (p.startsWith("media/")) return `${base}/${p}`;
+
+  return `${base}/media/${p}`;
+}
 
 
 export default function BonsCommandeIndex() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { state } = useAuth();
+
+  
 
   const meId =
   state.status === "signedIn" ? Number((state.user as any)?.id ?? 0) : 0;
@@ -144,6 +166,16 @@ const meLabel = useMemo(() => {
   // Filters
   const defaultSelectedUserId = useMemo(() => (meId ? meId : 0), [meId]);
 const [selectedUserId, setSelectedUserId] = useState<number>(defaultSelectedUserId);
+
+  const [imageModal, setImageModal] = useState<{ visible: boolean; uri: string | null; orderId?: number }>({
+    visible: false,
+    uri: null,
+    orderId: undefined,
+  });
+  const [imgLoading, setImgLoading] = useState(false);
+  const closeImageModal = useCallback(() => {
+  setImageModal({ visible: false, uri: null, orderId: undefined });
+}, []);
 
 
 
@@ -347,6 +379,9 @@ const onAdvanceStatus = useCallback(
 
   const Card = ({ item }: { item: BonCommandeItem }) => {
     const activeIdx = STATUS_STEPS.findIndex((s) => s === item.status);
+    const imageUrl = buildOrderImageUrl(item.image);
+
+
 
     return (
       <AppCard style={{ marginBottom: SPACING.md }}>
@@ -363,9 +398,29 @@ const onAdvanceStatus = useCallback(
             </Text>
           </View>
 
-          <Pressable hitSlop={10} onPress={() => {}} style={styles.infoBtn}>
-            <Ionicons name="information-circle-outline" size={22} color={COLORS.textMuted} />
-          </Pressable>
+                    <View style={styles.cardActions}>
+            <Pressable
+              hitSlop={10}
+              onPress={() => {
+                if (!imageUrl) return;
+                setImageModal({ visible: true, uri: imageUrl, orderId: item.id });
+              }}
+              style={[styles.iconBtn, !imageUrl && styles.iconBtnDisabled]}
+              disabled={!imageUrl}
+            >
+              <Ionicons name="eye-outline" size={22} color={imageUrl ? COLORS.textMuted : COLORS.border} />
+            </Pressable>
+
+            <Pressable
+  hitSlop={10}
+  onPress={() => router.push(`/bons-commande/${item.id}`)}
+  style={styles.infoBtn}
+>
+  <Ionicons name="information-circle-outline" size={22} color={COLORS.textMuted} />
+</Pressable>
+
+          </View>
+
         </View>
 
         <View style={styles.statusRow}>
@@ -455,7 +510,7 @@ const onAdvanceStatus = useCallback(
 
 
   const statusItemsForModal = useMemo(() => {
-    return statusOptions.map((x) => ({ key: x.key, label: x.label }));
+    return statusOptions.map((x) => ({ key: String(x.id), label: x.label }));
   }, [statusOptions]);
 
   const FiltersHeader = (
@@ -605,6 +660,47 @@ const onAdvanceStatus = useCallback(
           </View>
         </Modal>
       )}
+
+            {/* Image Bon de commande (Zoomable) */}
+<Modal
+  visible={imageModal.visible}
+  transparent
+  animationType="fade"
+  onRequestClose={closeImageModal}
+>
+  <View style={styles.imageBackdrop}>
+    <View style={[styles.imageTopBar, { paddingTop: Math.max(SPACING.lg, insets.top + 8) }]}>
+      <Text style={styles.imageTopTitle} numberOfLines={1}>
+        {b("Bon de Commande N°", "أمر شراء رقم")} {imageModal.orderId ?? ""}
+      </Text>
+
+      <Pressable onPress={closeImageModal} hitSlop={10} style={styles.modalCloseBtn}>
+        <Ionicons name="close" size={22} color={COLORS.textOnBrand} />
+      </Pressable>
+    </View>
+
+    {imageModal.uri ? (
+      <View style={styles.imageZoomArea}>
+        <ZoomableImage
+          uri={imageModal.uri}
+          height={Math.max(
+            260,
+            Dimensions.get("window").height - (insets.top + insets.bottom) - 120
+          )}
+          borderRadius={0}
+        />
+      </View>
+    ) : (
+      <View style={styles.imageEmpty}>
+        <Text style={{ color: COLORS.textOnBrand, fontWeight: "800" }}>
+          {b("Image indisponible", "الصورة غير متوفرة")}
+        </Text>
+      </View>
+    )}
+  </View>
+</Modal>
+
+
     </SafeAreaView>
   );
 }
@@ -822,4 +918,59 @@ statusTextActive: {
     justifyContent: "center",
   },
   doneBtnText: { color: COLORS.textOnBrand, fontWeight: "900" },
+    cardActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingTop: 2,
+  },
+  iconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconBtnDisabled: {
+    opacity: 0.5,
+  },
+
+  
+
+imageBackdrop: {
+  flex: 1,
+  backgroundColor: "rgba(0,0,0,0.92)",
+},
+
+imageTopBar: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  paddingHorizontal: SPACING.lg,
+  paddingBottom: SPACING.sm,
+},
+
+imageTopTitle: {
+  flex: 1,
+  paddingRight: 10,
+  color: COLORS.textOnBrand,
+  fontWeight: "900",
+  fontSize: 16,
+},
+
+imageZoomArea: {
+  flex: 1,
+  paddingHorizontal: SPACING.lg,
+  paddingBottom: SPACING.lg,
+},
+
+imageEmpty: {
+  flex: 1,
+  alignItems: "center",
+  justifyContent: "center",
+  paddingHorizontal: SPACING.lg,
+},
+
+
+
 });
